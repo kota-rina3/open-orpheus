@@ -48,10 +48,6 @@ registerCallHandler<[Record<string, object>], void>(
   }
 );
 
-registerCallHandler<[], void>("app.getAppStartCommand", () => {
-  /* empty */
-});
-
 const cooperation = {
   main: "",
   sub: "",

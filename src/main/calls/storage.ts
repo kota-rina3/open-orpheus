@@ -1,7 +1,9 @@
 import {
+  copyFile,
   mkdir,
   readdir,
   readFile,
+  rename,
   rm,
   stat,
   unlink,
@@ -502,5 +504,106 @@ registerCallHandler<[string, string, string, string, AddId3Request], void>(
         relPath
       );
     })();
+  }
+);
+
+async function handleFileBatch(
+  type: "copy" | "move",
+  event: Electron.IpcMainInvokeEvent,
+  srcPaths: string[],
+  destPaths: string[]
+) {
+  if (srcPaths.length !== destPaths.length) {
+    console.error("src and dest paths length mismatch");
+    return;
+  }
+
+  let processedCount = 0;
+  let lastSrc: string | null = null;
+  let lastDest: string | null = null;
+
+  try {
+    await Promise.all(
+      srcPaths.map(async (src, index) => {
+        src = normalizePath(src);
+        const dest = normalizePath(destPaths[index]);
+        await mkdir(dirname(dest), { recursive: true });
+        if (existsSync(src)) {
+          // Simply no-op if source doesn't exist
+          if (type === "copy") await copyFile(src, dest);
+          else await rename(src, dest);
+        }
+        processedCount++;
+        lastSrc = src;
+        lastDest = dest;
+        event.sender.send("channel.call", `storage.on${type}process`, {
+          code: 0,
+          state: srcPaths.length - processedCount,
+          errcode: 0,
+          remain: srcPaths.length - processedCount,
+          process: processedCount / srcPaths.length,
+          src,
+          dst: dest,
+        });
+      })
+    );
+  } catch (error) {
+    console.error(`Error when ${type} files: ${stringifyError(error)}`);
+    event.sender.send("channel.call", `storage.on${type}process`, {
+      code: 1,
+      state: srcPaths.length - processedCount,
+      errcode: 1,
+      remain: 0,
+      process: processedCount / srcPaths.length,
+      src: lastSrc || "",
+      dst: lastDest || "",
+    });
+    return;
+  }
+}
+
+registerCallHandler<["copy", "abs", "", string[], "abs", "", string[]], void>(
+  "storage.copyfiles",
+  async (
+    event,
+    type,
+    srcType,
+    emptyStr1,
+    srcPaths,
+    destType,
+    emptyStr2,
+    destPaths
+  ) => {
+    if (type !== "copy" || srcType !== "abs" || destType !== "abs") {
+      console.error(
+        `Unsupported file operation type: ${type} with srcType: ${srcType} and destType: ${destType}`
+      );
+      return;
+    }
+
+    handleFileBatch("copy", event, srcPaths, destPaths);
+  }
+);
+
+registerCallHandler<["move", "abs", "", string[], "abs", "", string[]], void>(
+  "storage.movefiles",
+  async (
+    event,
+    type,
+    srcType,
+    emptyStr1,
+    srcPaths,
+    destType,
+    emptyStr2,
+    destPaths
+  ) => {
+    if (type !== "move" || srcType !== "abs" || destType !== "abs") {
+      console.error(
+        `Unsupported file operation type: ${type} with srcType: ${srcType} and destType: ${destType}`
+      );
+      return;
+    }
+
+    handleFileBatch("move", event, srcPaths, destPaths);
   }
 );
