@@ -12,7 +12,7 @@ import {
 import { dirname, extname, join, resolve } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
 
-import { app } from "electron";
+import { app, BrowserWindow, dialog } from "electron";
 import mime from "mime";
 import { MetaPicture, MusicTagger } from "music-tag-native";
 
@@ -92,6 +92,31 @@ registerCallHandler<[string, string, string], [string, string]>(
   (event, downloadDir, someNumStr, cacheDir) => {
     if (!downloadDir) {
       downloadDir = resolve(app.getPath("downloads"), "CloudMusic");
+      if (process.env.FLATPAK_ID) {
+        // In Flatpak, we aren't able to access the default selected folder,
+        // we will prompt the user for the download dir, so Flatpak will grant us access.
+        const wnd = BrowserWindow.fromWebContents(event.sender);
+        if (!wnd) {
+          app.quit();
+          throw new Error("Main window is dead?");
+        }
+        const result = dialog.showOpenDialogSync(wnd, {
+          properties: ["createDirectory", "openDirectory", "dontAddToRecent"],
+          defaultPath: downloadDir,
+          title: "选择默认下载目录",
+          message: "由于 Flatpak 限制，首次启动必须手动指定下载目录",
+        });
+        if (!result || result.length === 0) {
+          dialog.showMessageBoxSync(wnd, {
+            type: "error",
+            message: "Flatpak 环境下必须选择初始下载目录",
+            title: "Open Orpheus",
+          });
+          app.quit();
+          throw new Error("Download dir is not selected.");
+        }
+        downloadDir = result[0];
+      }
     }
     if (!cacheDir) {
       cacheDir = defaultCache;
