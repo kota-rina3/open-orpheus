@@ -19,9 +19,36 @@ registerCallHandler<string[], void>("app.log", (_ev, ...args) => {
   console.log(...args);
 });
 
-registerCallHandler<[], void>("app.exit", () => {
+registerCallHandler<string[], void>("app.exit", (event, action, ...params) => {
+  if (action === "restart") {
+    app.relaunch();
+  } else if (action === "moverun") {
+    const src = params[0];
+    const dest = params[1];
+    app.relaunch({
+      args: process.argv.slice(1).concat(["--moverun", src, dest]),
+    });
+  }
   app.quit();
 });
+
+registerCallHandler<[], [] | [{ movesrc: string; movedest: string }]>(
+  "app.getAppStartCommand",
+  () => {
+    const moverunIdx = process.argv.indexOf("--moverun");
+    if (moverunIdx !== -1 && process.argv.length > moverunIdx + 2) {
+      const src = process.argv[moverunIdx + 1];
+      const dest = process.argv[moverunIdx + 2];
+      return [
+        {
+          movesrc: src,
+          movedest: dest,
+        },
+      ];
+    }
+    return [];
+  }
+);
 
 registerCallHandler<[string, string], [string]>(
   "app.getLocalConfig",
