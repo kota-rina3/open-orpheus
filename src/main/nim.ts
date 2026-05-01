@@ -1,7 +1,12 @@
 import { BrowserWindow, WebContents, ipcMain } from "electron";
 import client from "./request";
 import { serialData } from "./crypto";
-import { isRecord, getStringField, getStringParam, summarizeResponseBody } from "../shared/utils";
+import {
+  isRecord,
+  getStringField,
+  getStringParam,
+  summarizeResponseBody,
+} from "../shared/utils";
 import {
   extractListenTogetherCommandInfo,
   ListenTogetherCommandInfo,
@@ -27,7 +32,12 @@ let reverseSyncTimer: NodeJS.Timeout | null = null;
 let reverseSyncRunning = false;
 let lastReverseSyncSignature = "";
 let lastReverseSyncStatusSignature = "";
-let chatroomConnectionState: "idle" | "resolving" | "connecting" | "connected" | "leaving" = "idle";
+let chatroomConnectionState:
+  | "idle"
+  | "resolving"
+  | "connecting"
+  | "connected"
+  | "leaving" = "idle";
 let chatroomConnectingStartedAt = 0;
 
 type RtcEnterParams = Record<string, unknown>;
@@ -110,10 +120,20 @@ function dispatchReverseListenTogetherCommandToAll(
 function extractStatusChatRoomId(body: string) {
   try {
     const parsed = JSON.parse(body) as unknown;
-    if (!isRecord(parsed) || !isRecord(parsed.data) || !isRecord(parsed.data.roomInfo)) {
+    if (
+      !isRecord(parsed) ||
+      !isRecord(parsed.data) ||
+      !isRecord(parsed.data.roomInfo)
+    ) {
       return "";
     }
-    return getStringField(parsed.data.roomInfo, ["chatRoomId", "chatroomId", "chat_roomid"]) ?? "";
+    return (
+      getStringField(parsed.data.roomInfo, [
+        "chatRoomId",
+        "chatroomId",
+        "chat_roomid",
+      ]) ?? ""
+    );
   } catch {
     return "";
   }
@@ -139,11 +159,24 @@ function logReverseSyncStatus(statusCode: number, body: string) {
     if (isRecord(parsed)) {
       const data = isRecord(parsed.data) ? parsed.data : null;
       const roomInfo = data && isRecord(data.roomInfo) ? data.roomInfo : null;
-      const users = roomInfo && Array.isArray(roomInfo.roomUsers) ? roomInfo.roomUsers.length : 0;
-      const roomId = roomInfo ? getStringField(roomInfo, ["roomId"]) : undefined;
-      const chatRoomId = roomInfo ? getStringField(roomInfo, ["chatRoomId"]) : undefined;
+      const users =
+        roomInfo && Array.isArray(roomInfo.roomUsers)
+          ? roomInfo.roomUsers.length
+          : 0;
+      const roomId = roomInfo
+        ? getStringField(roomInfo, ["roomId"])
+        : undefined;
+      const chatRoomId = roomInfo
+        ? getStringField(roomInfo, ["chatRoomId"])
+        : undefined;
       const inRoom = data?.inRoom;
-      signature = [statusCode, inRoom, roomId ?? "", chatRoomId ?? "", users].join(":");
+      signature = [
+        statusCode,
+        inRoom,
+        roomId ?? "",
+        chatRoomId ?? "",
+        users,
+      ].join(":");
       summary = `code=${parsed.code ?? ""} inRoom=${String(inRoom)} roomId=${roomId ?? ""} chatRoomId=${chatRoomId ?? ""} users=${users}`;
     }
   } catch {
@@ -159,22 +192,32 @@ export function startReverseSyncPoll() {
   if (reverseSyncTimer) {
     stopReverseSyncPoll();
   }
-  console.log("[LT:POLL] starting reverse sync poll, roomId:", rtcParams.roomId);
+  console.log(
+    "[LT:POLL] starting reverse sync poll, roomId:",
+    rtcParams.roomId
+  );
   const sessionRoomId = rtcParams.roomId;
 
   async function poll() {
-    if (!rtcParams.roomId || !rtcParams.channelId || rtcParams.roomId !== sessionRoomId) {
+    if (
+      !rtcParams.roomId ||
+      !rtcParams.channelId ||
+      rtcParams.roomId !== sessionRoomId
+    ) {
       stopReverseSyncPoll();
       return;
     }
     if (reverseSyncRunning) return;
     reverseSyncRunning = true;
     try {
-      const resp = await client.post("https://music.163.com/api/listen/together/status/get", {
-        form: { roomId: rtcParams.roomId },
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        throwHttpErrors: false,
-      });
+      const resp = await client.post(
+        "https://music.163.com/api/listen/together/status/get",
+        {
+          form: { roomId: rtcParams.roomId },
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          throwHttpErrors: false,
+        }
+      );
 
       if (rtcParams.roomId !== sessionRoomId) return;
 
@@ -184,7 +227,9 @@ export function startReverseSyncPoll() {
       try {
         const parsed = JSON.parse(resp.body);
         apiSuccess = isRecord(parsed) && parsed.code === 200;
-      } catch { /* non-JSON */ }
+      } catch {
+        /* non-JSON */
+      }
 
       if (!apiSuccess) return;
 
@@ -196,20 +241,36 @@ export function startReverseSyncPoll() {
       }
 
       const chatRoomId = extractStatusChatRoomId(resp.body);
-      if (chatRoomId && chatRoomId !== currentChatroomId && chatroomConnectionState === "idle") {
-        console.log("[LT:POLL] auto joining chatroom from status/get:", chatRoomId);
+      if (
+        chatRoomId &&
+        chatRoomId !== currentChatroomId &&
+        chatroomConnectionState === "idle"
+      ) {
+        console.log(
+          "[LT:POLL] auto joining chatroom from status/get:",
+          chatRoomId
+        );
         currentChatroomId = chatRoomId;
         chatroomConnectionState = "connecting";
         chatroomConnectingStartedAt = Date.now();
         const ownerWin = getOwnerWindow();
         if (ownerWin) {
-          ownerWin.webContents.send(IPC.NIM_JOIN_CHATROOM, chatRoomId, rtcParams.userId);
+          ownerWin.webContents.send(
+            IPC.NIM_JOIN_CHATROOM,
+            chatRoomId,
+            rtcParams.userId
+          );
         }
       }
 
-      if (chatroomConnectionState === "connecting" && chatroomConnectingStartedAt > 0 &&
-          Date.now() - chatroomConnectingStartedAt > 30000) {
-        console.warn("[LT:POLL] chatroom connecting timed out, resetting to idle");
+      if (
+        chatroomConnectionState === "connecting" &&
+        chatroomConnectingStartedAt > 0 &&
+        Date.now() - chatroomConnectingStartedAt > 30000
+      ) {
+        console.warn(
+          "[LT:POLL] chatroom connecting timed out, resetting to idle"
+        );
         chatroomConnectionState = "idle";
         chatroomConnectingStartedAt = 0;
       }
@@ -261,12 +322,20 @@ async function getListenTogetherToken(
   const rid = roomId || rtcParams.roomId;
 
   try {
-    const imResp = await client.post("https://music.163.com/api/middle/im/token/get", {
-      throwHttpErrors: false,
-    });
+    const imResp = await client.post(
+      "https://music.163.com/api/middle/im/token/get",
+      {
+        throwHttpErrors: false,
+      }
+    );
     const imData = JSON.parse(imResp.body);
     if (imData.code !== 200 || !imData.data?.token) {
-      console.warn("[NIM] IM token failed: HTTP", imResp.statusCode, "code:", imData.code);
+      console.warn(
+        "[NIM] IM token failed: HTTP",
+        imResp.statusCode,
+        "code:",
+        imData.code
+      );
       return { code: -1, message: "Failed to get IM token" };
     }
 
@@ -277,7 +346,9 @@ async function getListenTogetherToken(
     };
 
     if (!cid || !rid) {
-      console.log("[NIM] getListenTogetherToken: skipping yunxin token, no channelId/roomId yet");
+      console.log(
+        "[NIM] getListenTogetherToken: skipping yunxin token, no channelId/roomId yet"
+      );
       return {
         code: 200,
         data: {
@@ -299,7 +370,12 @@ async function getListenTogetherToken(
     );
     const yxData = JSON.parse(yxResp.body);
     if (yxData.code !== 200 || !yxData.data?.token) {
-      console.warn("[NIM] yunxin token failed: HTTP", yxResp.statusCode, "code:", yxData.code);
+      console.warn(
+        "[NIM] yunxin token failed: HTTP",
+        yxResp.statusCode,
+        "code:",
+        yxData.code
+      );
       return { code: -1, message: "Failed to get yunxin token" };
     }
 
@@ -320,7 +396,9 @@ async function getListenTogetherToken(
 function getAddressList(data: unknown) {
   const raw = getAddressListCandidate(data);
   if (!Array.isArray(raw)) return [];
-  return raw.filter((item): item is string => typeof item === "string" && item.length > 0);
+  return raw.filter(
+    (item): item is string => typeof item === "string" && item.length > 0
+  );
 }
 
 function getAddressListCandidate(data: unknown): unknown {
@@ -340,7 +418,8 @@ function getAddressListCandidate(data: unknown): unknown {
   if (Array.isArray(candidate.addr)) return candidate.addr;
   if (Array.isArray(candidate.address)) return candidate.address;
   if (Array.isArray(candidate.addresses)) return candidate.addresses;
-  if (Array.isArray(candidate.chatroomAddresses)) return candidate.chatroomAddresses;
+  if (Array.isArray(candidate.chatroomAddresses))
+    return candidate.chatroomAddresses;
   if (Array.isArray(candidate.items)) return candidate.items;
   return getAddressListCandidate(candidate.data ?? candidate.result);
 }
@@ -348,7 +427,9 @@ function getAddressListCandidate(data: unknown): unknown {
 function getOwnerWindow(): BrowserWindow | null {
   const windows = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed());
   if (chatroomWebContentsId) {
-    const owner = windows.find((w) => w.webContents.id === chatroomWebContentsId);
+    const owner = windows.find(
+      (w) => w.webContents.id === chatroomWebContentsId
+    );
     if (owner) return owner;
   }
   return windows.length > 0 ? windows[0] : null;
@@ -382,8 +463,15 @@ export function enterOrJoinRtc(
   });
 }
 
-export function broadcastListenTogetherPlayCommand(commandInfo: ListenTogetherCommandInfo) {
-  console.log("[LT:SEND] broadcast", commandInfo.commandType, commandInfo.playStatus, commandInfo.targetSongId);
+export function broadcastListenTogetherPlayCommand(
+  commandInfo: ListenTogetherCommandInfo
+) {
+  console.log(
+    "[LT:SEND] broadcast",
+    commandInfo.commandType,
+    commandInfo.playStatus,
+    commandInfo.targetSongId
+  );
   if (!commandInfo.userId && rtcParams.userId) {
     commandInfo.userId = Number.isNaN(Number(rtcParams.userId))
       ? rtcParams.userId
@@ -407,99 +495,120 @@ export function broadcastListenTogetherPlayCommand(commandInfo: ListenTogetherCo
 
 // ===== IPC Handlers =====
 
-ipcMain.handle(IPC.NIM_GET_LISTEN_TOGETHER_TOKEN, async (_event, channelId?: string, roomId?: string) => {
-  return getListenTogetherToken(channelId, roomId);
-});
-
-ipcMain.handle(IPC.NIM_GET_CHATROOM_ADDR, async (_event, chatRoomId?: string, userId?: string) => {
-  const cid = typeof chatRoomId === "string" ? chatRoomId : "";
-  if (!cid) {
-    console.warn("[NIM] getChatroomAddr: no chatRoomId provided");
-    return { addresses: [] as string[] };
+ipcMain.handle(
+  IPC.NIM_GET_LISTEN_TOGETHER_TOKEN,
+  async (_event, channelId?: string, roomId?: string) => {
+    return getListenTogetherToken(channelId, roomId);
   }
+);
 
-  try {
-    const tokenResult = await getListenTogetherToken();
-    const accid = tokenResult.code === 200 ? tokenResult.data.imAccId : "";
-    const fallbackAccid = typeof userId === "string" && userId ? userId : rtcParams.userId;
-    const addressAccid = accid || fallbackAccid;
-    const addressBody = addressAccid
-      ? `roomid=${encodeURIComponent(cid)}&accid=${encodeURIComponent(addressAccid)}&clienttype=1`
-      : `roomid=${encodeURIComponent(cid)}`;
-    const eapiParams = serialData("/api/im/getChatroomAddr", addressBody);
-    const addrResp = await client.post(
-      "https://music.163.com/api/linux/forward",
-      {
-        body: `eparams=${eapiParams}`,
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        throwHttpErrors: false,
-      }
-    );
-
-    let addrData: unknown;
-    try {
-      addrData = JSON.parse(addrResp.body);
-    } catch {
-      console.warn("[NIM] chatroom addr API returned invalid JSON, falling back to non-eapi endpoint");
-      addrData = {};
+ipcMain.handle(
+  IPC.NIM_GET_CHATROOM_ADDR,
+  async (_event, chatRoomId?: string, userId?: string) => {
+    const cid = typeof chatRoomId === "string" ? chatRoomId : "";
+    if (!cid) {
+      console.warn("[NIM] getChatroomAddr: no chatRoomId provided");
+      return { addresses: [] as string[] };
     }
-    const addresses = getAddressList(addrData);
 
-    if (!Array.isArray(addresses) || addresses.length === 0) {
-      console.warn(
-        "[NIM] chatroom eapi addr empty:",
-        addrResp.statusCode,
-        summarizeResponseBody(addrResp.body)
-      );
-      const altResp = await client.post(
-        "https://music.163.com/api/im/getChatroomAddr",
+    try {
+      const tokenResult = await getListenTogetherToken();
+      const accid = tokenResult.code === 200 ? tokenResult.data.imAccId : "";
+      const fallbackAccid =
+        typeof userId === "string" && userId ? userId : rtcParams.userId;
+      const addressAccid = accid || fallbackAccid;
+      const addressBody = addressAccid
+        ? `roomid=${encodeURIComponent(cid)}&accid=${encodeURIComponent(addressAccid)}&clienttype=1`
+        : `roomid=${encodeURIComponent(cid)}`;
+      const eapiParams = serialData("/api/im/getChatroomAddr", addressBody);
+      const addrResp = await client.post(
+        "https://music.163.com/api/linux/forward",
         {
-          body: addressBody,
+          body: `eparams=${eapiParams}`,
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
           throwHttpErrors: false,
         }
       );
 
-      let altData: unknown;
+      let addrData: unknown;
       try {
-        altData = JSON.parse(altResp.body);
+        addrData = JSON.parse(addrResp.body);
       } catch {
-        console.warn("[NIM] fallback chatroom addr API also returned invalid JSON");
-        altData = {};
-      }
-      const addrs = getAddressList(altData);
-      if (addrs.length === 0) {
         console.warn(
-          "[NIM] chatroom fallback addr empty:",
-          altResp.statusCode,
-          summarizeResponseBody(altResp.body)
+          "[NIM] chatroom addr API returned invalid JSON, falling back to non-eapi endpoint"
         );
-        console.warn("[NIM] no chatroom addresses available, letting SDK resolve chatroom addresses");
-      } else {
-        addresses.push(...addrs);
+        addrData = {};
       }
+      const addresses = getAddressList(addrData);
+
+      if (!Array.isArray(addresses) || addresses.length === 0) {
+        console.warn(
+          "[NIM] chatroom eapi addr empty:",
+          addrResp.statusCode,
+          summarizeResponseBody(addrResp.body)
+        );
+        const altResp = await client.post(
+          "https://music.163.com/api/im/getChatroomAddr",
+          {
+            body: addressBody,
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            throwHttpErrors: false,
+          }
+        );
+
+        let altData: unknown;
+        try {
+          altData = JSON.parse(altResp.body);
+        } catch {
+          console.warn(
+            "[NIM] fallback chatroom addr API also returned invalid JSON"
+          );
+          altData = {};
+        }
+        const addrs = getAddressList(altData);
+        if (addrs.length === 0) {
+          console.warn(
+            "[NIM] chatroom fallback addr empty:",
+            altResp.statusCode,
+            summarizeResponseBody(altResp.body)
+          );
+          console.warn(
+            "[NIM] no chatroom addresses available, letting SDK resolve chatroom addresses"
+          );
+        } else {
+          addresses.push(...addrs);
+        }
+      }
+
+      console.log(
+        "[NIM] got",
+        addresses.length,
+        "chatroom addresses:",
+        addresses
+      );
+      return { addresses };
+    } catch (e) {
+      console.error("[NIM] getChatroomAddr error:", e);
+      return { addresses: [] as string[] };
     }
-
-    console.log("[NIM] got", addresses.length, "chatroom addresses:", addresses);
-    return { addresses };
-  } catch (e) {
-    console.error("[NIM] getChatroomAddr error:", e);
-    return { addresses: [] as string[] };
   }
-});
+);
 
-ipcMain.on(IPC.NIM_JOIN_CHATROOM, (_event, chatRoomId?: string, _userId?: string) => {
-  const cid = typeof chatRoomId === "string" ? chatRoomId : "";
-  if (!cid) {
-    console.warn("[NIM] joinChatroom: no chatRoomId provided, skipping");
-    return;
+ipcMain.on(
+  IPC.NIM_JOIN_CHATROOM,
+  (_event, chatRoomId?: string, _userId?: string) => {
+    const cid = typeof chatRoomId === "string" ? chatRoomId : "";
+    if (!cid) {
+      console.warn("[NIM] joinChatroom: no chatRoomId provided, skipping");
+      return;
+    }
+    chatroomWebContentsId = _event.sender.id;
+    currentChatroomId = cid;
+    chatroomConnectionState = "connecting";
+    chatroomConnectingStartedAt = Date.now();
+    console.log("[NIM] chatroom join registered for", cid);
   }
-  chatroomWebContentsId = _event.sender.id;
-  currentChatroomId = cid;
-  chatroomConnectionState = "connecting";
-  chatroomConnectingStartedAt = Date.now();
-  console.log("[NIM] chatroom join registered for", cid);
-});
+);
 
 ipcMain.on(IPC.NIM_LEAVE_CHATROOM, () => {
   leaveListenTogether("nim.leaveChatroom");
@@ -522,7 +631,12 @@ ipcMain.on(IPC.LT_REMOTE_EVENT, (_event, payload: string, source: string) => {
 });
 
 ipcMain.on(IPC.LT_PAGE_LOG, (_event, level: string, message: string) => {
-  const method = level === "error" ? console.error : level === "warn" ? console.warn : console.log;
+  const method =
+    level === "error"
+      ? console.error
+      : level === "warn"
+        ? console.warn
+        : console.log;
   method("[LT:PAGE]", message);
 });
 
@@ -542,23 +656,39 @@ ipcMain.handle(IPC.NIM_ENTER_RTC, async (_event, params: RtcEnterParams) => {
   return { code: 200 };
 });
 
-ipcMain.on(IPC.LT_NATIVE_PLAY_COMMAND, (_event, commandInfo: ListenTogetherCommandInfo) => {
-  console.log("[LT:IPC] nativePlayCommand, canBroadcast:", rtcParams.canBroadcastNativePlayCommand, "type:", commandInfo.commandType);
-  if (!rtcParams.canBroadcastNativePlayCommand) {
-    console.log("[LT:IPC] blocked: canBroadcastNativePlayCommand=false");
-    return;
-  }
+ipcMain.on(
+  IPC.LT_NATIVE_PLAY_COMMAND,
+  (_event, commandInfo: ListenTogetherCommandInfo) => {
+    console.log(
+      "[LT:IPC] nativePlayCommand, canBroadcast:",
+      rtcParams.canBroadcastNativePlayCommand,
+      "type:",
+      commandInfo.commandType
+    );
+    if (!rtcParams.canBroadcastNativePlayCommand) {
+      console.log("[LT:IPC] blocked: canBroadcastNativePlayCommand=false");
+      return;
+    }
 
-  if (rtcParams.channelId && rtcParams.roomId) {
-    const body = `channelId=${encodeURIComponent(rtcParams.channelId)}&roomId=${encodeURIComponent(rtcParams.roomId)}&commandInfo=${encodeURIComponent(JSON.stringify(commandInfo))}`;
-    client.post("https://music.163.com/api/listen/together/play/command/report", {
-      body,
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      throwHttpErrors: false,
-    }).then((resp) => {
-      console.log("[LT:API] HTTP", resp.statusCode, "body:", resp.body.slice(0, 300));
-    }).catch((e) => {
-      console.warn("[LT:API] HTTP failed:", e);
-    });
+    if (rtcParams.channelId && rtcParams.roomId) {
+      const body = `channelId=${encodeURIComponent(rtcParams.channelId)}&roomId=${encodeURIComponent(rtcParams.roomId)}&commandInfo=${encodeURIComponent(JSON.stringify(commandInfo))}`;
+      client
+        .post("https://music.163.com/api/listen/together/play/command/report", {
+          body,
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          throwHttpErrors: false,
+        })
+        .then((resp) => {
+          console.log(
+            "[LT:API] HTTP",
+            resp.statusCode,
+            "body:",
+            resp.body.slice(0, 300)
+          );
+        })
+        .catch((e) => {
+          console.warn("[LT:API] HTTP failed:", e);
+        });
+    }
   }
-});
+);

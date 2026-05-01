@@ -27,7 +27,10 @@ function getNestedRecord(source: Record<string, unknown>, path: string[]) {
   return isRecord(current) ? current : null;
 }
 
-function collectNestedRecords(value: unknown, records: Record<string, unknown>[] = []) {
+function collectNestedRecords(
+  value: unknown,
+  records: Record<string, unknown>[] = []
+) {
   if (typeof value === "string" && value.trim().startsWith("{")) {
     try {
       collectNestedRecords(JSON.parse(value), records);
@@ -47,7 +50,12 @@ function collectNestedRecords(value: unknown, records: Record<string, unknown>[]
 }
 
 function hasListenTogetherPlayCommandType(record: Record<string, unknown>) {
-  const type = getNumberField(record, ["type", "msgType", "messageType", "bizType"]);
+  const type = getNumberField(record, [
+    "type",
+    "msgType",
+    "messageType",
+    "bizType",
+  ]);
   return type === LISTEN_TOGETHER_PLAY_COMMAND_MESSAGE_TYPE;
 }
 
@@ -64,7 +72,9 @@ export function normalizePlayStatus(value: unknown) {
   if (typeof value !== "string") return undefined;
 
   const token = value.trim().toUpperCase();
-  if (["PLAY", "PLAYING", "START", "STARTED", "RESUME", "RESUMED"].includes(token)) {
+  if (
+    ["PLAY", "PLAYING", "START", "STARTED", "RESUME", "RESUMED"].includes(token)
+  ) {
     return "PLAY";
   }
   if (["PAUSE", "PAUSED", "STOP", "STOPPED"].includes(token)) {
@@ -76,7 +86,19 @@ export function normalizePlayStatus(value: unknown) {
 export function normalizeCommandType(value: string | undefined) {
   const token = normalizeCommandToken(value);
   if (!token) return undefined;
-  if (["PLAY", "PAUSE", "PROGRESS", "GOTO", "SEEK", "SEEKED", "NEXT", "SWITCH", "CHANGE"].includes(token)) {
+  if (
+    [
+      "PLAY",
+      "PAUSE",
+      "PROGRESS",
+      "GOTO",
+      "SEEK",
+      "SEEKED",
+      "NEXT",
+      "SWITCH",
+      "CHANGE",
+    ].includes(token)
+  ) {
     if (token === "SEEK" || token === "SEEKED") return "PROGRESS";
     if (token === "SWITCH" || token === "CHANGE") return "NEXT";
     return token;
@@ -96,10 +118,20 @@ function extractFromRecord(
   }
 
   const commandType = normalizeCommandType(
-    getStringField(commandInfo, ["commandType", "cmd", "type", "action", "eventType"])
+    getStringField(commandInfo, [
+      "commandType",
+      "cmd",
+      "type",
+      "action",
+      "eventType",
+    ])
   );
   const playStatus = normalizePlayStatus(
-    commandInfo.playStatus ?? commandInfo.status ?? commandInfo.playing ?? commandInfo.isPlaying ?? commandInfo.state
+    commandInfo.playStatus ??
+      commandInfo.status ??
+      commandInfo.playing ??
+      commandInfo.isPlaying ??
+      commandInfo.state
   );
   const progress = getNumberField(commandInfo, [
     "progress",
@@ -121,7 +153,12 @@ function extractFromRecord(
     "prevSongId",
     "lastSongId",
   ]);
-  const clientSeq = getNumberField(commandInfo, ["clientSeq", "seq", "sequence", "msgId"]);
+  const clientSeq = getNumberField(commandInfo, [
+    "clientSeq",
+    "seq",
+    "sequence",
+    "msgId",
+  ]);
 
   if (!commandType && !playStatus) return null;
   if (!targetSongId && !formerSongId && progress === undefined) return null;
@@ -137,7 +174,9 @@ function extractFromRecord(
   };
 }
 
-export function extractListenTogetherCommandInfo(value: unknown): ListenTogetherCommandInfo | null {
+export function extractListenTogetherCommandInfo(
+  value: unknown
+): ListenTogetherCommandInfo | null {
   if (typeof value === "string") {
     try {
       return extractListenTogetherCommandInfo(JSON.parse(value));
@@ -178,5 +217,7 @@ export function extractListenTogetherCommandInfo(value: unknown): ListenTogether
 
 export function getCommandSongId(command: ListenTogetherCommandInfo) {
   const songId = command.targetSongId || command.songId || command.formerSongId;
-  return typeof songId === "string" || typeof songId === "number" ? String(songId) : "";
+  return typeof songId === "string" || typeof songId === "number"
+    ? String(songId)
+    : "";
 }

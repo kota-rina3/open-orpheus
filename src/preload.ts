@@ -4,4 +4,3 @@
 import "./preload/channel";
 import "./preload/desktopLyrics";
 import "./preload/miniprogram";
-import "./preload/yunxin";

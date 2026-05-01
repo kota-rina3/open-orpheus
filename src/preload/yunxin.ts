@@ -1,72 +1,34 @@
 import { ipcRenderer } from "electron";
+import SDK from "@yxim/nim-web-sdk";
+import type { NIMChatroomMessage } from "@yxim/nim-web-sdk/dist/types/chatroom/NIMChatroomMessageInterface";
+
 import { IPC, NIM_APP_KEY } from "../shared/listenTogetherConstants";
-import { dispatcher } from "./calls";
-
-// ===== Types =====
-
-type YunxinPayload = Record<string, unknown>;
-type Callback = (data: YunxinPayload) => void;
-
-interface NimInstance {
-  on(event: string, handler: (...args: unknown[]) => void): void;
-  destroy(opts: Record<string, unknown>): void;
-  getChatroomAddress(opts: {
-    chatroomId: string;
-    done: (err: unknown, data: { address?: string[] }) => void;
-  }): void;
-}
-
-interface ChatroomInstance {
-  connect(): void;
-  disconnect(opts: Record<string, unknown>): void;
-  sendText(opts: { text: string; done?: (err: unknown) => void }): void;
-  on(event: string, handler: (...args: unknown[]) => void): void;
-}
-
-interface NimSDK {
-  NIM: {
-    getInstance(opts: Record<string, unknown>): NimInstance;
-  };
-  Chatroom: {
-    getInstance(opts: Record<string, unknown>): ChatroomInstance;
-  };
-}
-
-let SDK: NimSDK | null = null;
+import { fireNativeCall } from "./channel";
+import {
+  extractListenTogetherCommandInfo,
+  getCommandSongId,
+  normalizeCommandToken,
+} from "../shared/listenTogetherCommand";
+import {
+  suppressListenTogetherPlaybackResume,
+  suppressListenTogetherRemoteChangeEcho,
+} from "./audioplayer";
 
 // ===== State =====
 
-let nimInstance: NimInstance | null = null;
-let nimInstancePromise: Promise<NimInstance> | null = null;
-let chatroomInstance: ChatroomInstance | null = null;
+let nimInstance: SDK.NIM | null = null;
+let nimInstancePromise: Promise<SDK.NIM> | null = null;
+let chatroomInstance: SDK.Chatroom | null = null;
 let chatroomConnected = false;
 let intentionalChatroomDisconnect = false;
 let currentChatroomId: string | null = null;
 let loginSessionId = 0;
 let nimAccount = "";
 
-export let chatRoomMsgCallback: Callback | null = null;
-
 export const imState: { connected: boolean; chatRoomId: string | null } = {
   connected: false,
   chatRoomId: null,
 };
-
-// ===== SDK Loader =====
-
-async function getSDK(): Promise<NimSDK> {
-  if (SDK) return SDK;
-
-  try {
-    const module = await import("@yxim/nim-web-sdk");
-    SDK = module as unknown as NimSDK;
-    console.log("[YunxinIM] NIM SDK loaded via static import");
-    return SDK;
-  } catch (e) {
-    console.error("[YunxinIM] Failed to load NIM SDK:", e);
-    throw e;
-  }
-}
 
 // ===== Helpers =====
 
@@ -84,13 +46,64 @@ function resetIMState() {
   imState.chatRoomId = null;
 }
 
-
 function notifyMainChatroomConnected() {
   ipcRenderer.send(IPC.LT_CHATROOM_CONNECTED);
 }
 
 function notifyMainChatroomLeave() {
   ipcRenderer.send(IPC.NIM_LEAVE_CHATROOM);
+}
+
+function toChatRoomMsgText(value: unknown): string | null {
+  if (typeof value === "string" && value) return value;
+  if (value && typeof value === "object") return JSON.stringify(value);
+  return null;
+}
+
+// TODO: Confirm if `msg` is a valid field
+const CHAT_ROOM_MESSAGE_TEXT_KEYS: (keyof NIMChatroomMessage)[] = [
+  /* "msg",  */ "text",
+  "content",
+  "attach",
+  "custom",
+];
+function getChatRoomMsgText(msg: NIMChatroomMessage) {
+  for (const key of CHAT_ROOM_MESSAGE_TEXT_KEYS) {
+    const text = toChatRoomMsgText(msg[key]);
+    if (text) return text;
+  }
+  return "";
+}
+
+function normalizeChatRoomMsg(msg: NIMChatroomMessage) {
+  const text = getChatRoomMsgText(msg);
+  return {
+    ...msg,
+    msg: text,
+  };
+}
+
+function summarizePayload(payload: string) {
+  return payload.replace(/\s+/g, " ").slice(0, 500);
+}
+
+function suppressRemoteCommandEcho(payload: string) {
+  const command = extractListenTogetherCommandInfo(payload);
+  if (!command) return;
+  const commandType = normalizeCommandToken(command.commandType);
+  const playStatus = normalizeCommandToken(command.playStatus);
+  const songId = getCommandSongId(command);
+  if (commandType === "PAUSE" || playStatus === "PAUSE") {
+    suppressListenTogetherPlaybackResume(songId);
+    return;
+  }
+  if (
+    commandType === "NEXT" ||
+    commandType === "PROGRESS" ||
+    commandType === "GOTO"
+  ) {
+    suppressListenTogetherRemoteChangeEcho(songId);
+  }
 }
 
 // ===== IM Management =====
@@ -110,10 +123,9 @@ function destroyIMInstance() {
 }
 
 async function initIMInstance(
-  sdk: NimSDK,
   account: string,
   token: string
-): Promise<NimInstance> {
+): Promise<SDK.NIM> {
   const existing = nimInstance;
   if (existing && nimAccount === account) {
     console.log("[YunxinIM] reusing existing NIM instance, account:", account);
@@ -121,32 +133,43 @@ async function initIMInstance(
   }
 
   if (nimInstancePromise && nimAccount === account) {
-    console.log("[YunxinIM] IM init already in progress, reusing pending promise");
+    console.log(
+      "[YunxinIM] IM init already in progress, reusing pending promise"
+    );
     return nimInstancePromise;
   }
 
   if (existing) {
-    console.log("[YunxinIM] destroying previous NIM instance, account changed:", nimAccount, "->", account);
+    console.log(
+      "[YunxinIM] destroying previous NIM instance, account changed:",
+      nimAccount,
+      "->",
+      account
+    );
     destroyIMInstance();
   }
 
   nimAccount = account;
-  let pendingInstance: NimInstance | null = null;
-  nimInstancePromise = new Promise<NimInstance>((resolve, reject) => {
+  let pendingInstance: SDK.NIM | null = null;
+  nimInstancePromise = new Promise<SDK.NIM>((resolve, reject) => {
     let done = false;
     const timeout = setTimeout(() => {
       if (!done) {
         done = true;
         nimInstancePromise = null;
         if (pendingInstance) {
-          try { pendingInstance.destroy({}); } catch { /* */ }
+          try {
+            pendingInstance.destroy({});
+          } catch {
+            /* */
+          }
         }
         nimInstance = null;
         reject(new Error("NIM connect timeout"));
       }
     }, 15000);
 
-    pendingInstance = sdk.NIM.getInstance({
+    pendingInstance = SDK.NIM.getInstance({
       appKey: NIM_APP_KEY,
       account,
       token,
@@ -169,8 +192,8 @@ async function initIMInstance(
         setConnectionState("connected");
         resolve(pendingInstance!);
       },
-      ondisconnect: (e: unknown) => {
-        console.warn("[YunxinIM] NIM disconnected:", (e as Record<string, unknown>)?.code);
+      ondisconnect: (e) => {
+        console.warn("[YunxinIM] NIM disconnected:", e.code);
         nimInstancePromise = null;
         setConnectionState("disconnected");
       },
@@ -183,9 +206,13 @@ async function initIMInstance(
           reject(e instanceof Error ? e : new Error("NIM connection error"));
         }
       },
-      onwillreconnect: (e: unknown) => {
-        const info = e as Record<string, unknown> | undefined;
-        console.warn("[YunxinIM] NIM will reconnect, retry:", info?.retryCount, "duration:", info?.duration);
+      onwillreconnect: (info) => {
+        console.warn(
+          "[YunxinIM] NIM will reconnect, retry:",
+          info?.retryCount,
+          "duration:",
+          info?.duration
+        );
       },
     });
   });
@@ -199,7 +226,12 @@ function destroyChatroomInstance() {
   intentionalChatroomDisconnect = true;
   if (chatroomInstance) {
     try {
-      chatroomInstance.disconnect({});
+      chatroomInstance.disconnect({
+        done(err, data) {
+          // TODO: Confirm if we need to do anything here.
+          console.log("chatroom done", err, data);
+        },
+      });
     } catch (e) {
       console.warn("[YunxinIM] disconnect chatroom error:", e);
     }
@@ -212,15 +244,14 @@ function destroyChatroomInstance() {
 }
 
 async function initChatroomInstance(
-  sdk: NimSDK,
   chatroomId: string,
   addresses: string[]
-): Promise<ChatroomInstance> {
+): Promise<SDK.Chatroom> {
   destroyChatroomInstance();
   setChatRoomState("entering", chatroomId);
   currentChatroomId = chatroomId;
 
-  return new Promise<ChatroomInstance>((resolve, reject) => {
+  return new Promise<SDK.Chatroom>((resolve, reject) => {
     let done = false;
     const chatroomTimeout = setTimeout(() => {
       if (!done) {
@@ -228,7 +259,16 @@ async function initChatroomInstance(
         console.warn("[YunxinIM] chatroom connect timeout:", chatroomId);
         intentionalChatroomDisconnect = true;
         if (chatroomInstance) {
-          try { chatroomInstance.disconnect({}); } catch { /* */ }
+          try {
+            chatroomInstance.disconnect({
+              done(err, data) {
+                // TODO: Confirm if we need to do anything here.
+                console.log("chatroom done", err, data);
+              },
+            });
+          } catch {
+            /* */
+          }
           chatroomInstance = null;
         }
         intentionalChatroomDisconnect = false;
@@ -237,10 +277,14 @@ async function initChatroomInstance(
       }
     }, 15000);
 
-    const chatroomOptions: Record<string, unknown> = {
+    const chatroomOptions: Parameters<typeof SDK.Chatroom.getInstance>[0] = {
+      secure: true,
+      chatroomAddresses: addresses,
       appKey: NIM_APP_KEY,
       chatroomId,
       isAnonymous: true,
+      account: undefined as unknown as string, // Type safe: isAnonymous = true
+      token: undefined as unknown as string, // Type safe: isAnonymous = true
       chatroomNick: "listen_together_user",
       logLevel: "warn",
       onconnect: () => {
@@ -254,29 +298,50 @@ async function initChatroomInstance(
         resolve(chatroom);
       },
       ondisconnect: (e: unknown) => {
-        console.warn("[YunxinIM] chatroom disconnected:", (e as Record<string, unknown>)?.code);
+        console.warn(
+          "[YunxinIM] chatroom disconnected:",
+          (e as Record<string, unknown>)?.code
+        );
         chatroomConnected = false;
         setChatRoomState("none", null);
         if (!intentionalChatroomDisconnect) {
           notifyMainChatroomLeave();
         }
       },
-      onerror: (e: unknown) => {
+      // TODO: Confirm this exists or not
+      /* onerror: (e: unknown) => {
         console.error("[YunxinIM] chatroom error:", (e as Record<string, unknown>)?.code, e);
         if (!done && !chatroomConnected) {
           done = true;
           clearTimeout(chatroomTimeout);
           reject(e instanceof Error ? e : new Error("Chatroom connection error"));
         }
-      },
+      }, */
       onwillreconnect: (e: unknown) => {
         const info = e as Record<string, unknown> | undefined;
-        console.warn("[YunxinIM] chatroom reconnecting, retry:", info?.retryCount, "duration:", info?.duration);
+        console.warn(
+          "[YunxinIM] chatroom reconnecting, retry:",
+          info?.retryCount,
+          "duration:",
+          info?.duration
+        );
       },
-      onmsgs: (msgs: Array<Record<string, unknown>>) => {
+      onmsgs: (msgs) => {
         for (const msg of msgs) {
           try {
-            dispatcher.dispatch("nim.msg", () => {}, JSON.stringify(msg));
+            let eventMsg: string = "";
+            const normalizedMsg = normalizeChatRoomMsg(msg);
+            eventMsg = normalizedMsg.msg;
+            console.log(
+              "[LT:RECV] nim.msg from:",
+              msg.from,
+              "type:",
+              msg.type,
+              "msg:",
+              summarizePayload(eventMsg)
+            );
+            suppressRemoteCommandEcho(eventMsg);
+            fireNativeCall("im.onChatRoomMsg", { msg: eventMsg });
           } catch {
             // Drop silently if renderer isn't ready
           }
@@ -284,12 +349,14 @@ async function initChatroomInstance(
       },
     };
 
-    chatroomOptions.chatroomAddresses = addresses;
-
-    const chatroom = sdk.Chatroom.getInstance(chatroomOptions);
+    const chatroom = SDK.Chatroom.getInstance(chatroomOptions);
     chatroomInstance = chatroom;
 
-    if (chatroom && typeof (chatroom as unknown as { connect?: () => void }).connect === "function") {
+    if (
+      chatroom &&
+      typeof (chatroom as unknown as { connect?: () => void }).connect ===
+        "function"
+    ) {
       setTimeout(() => {
         if (!chatroomConnected && currentChatroomId === chatroomId) {
           try {
@@ -320,20 +387,13 @@ export function sendChatroomText(text: string): boolean {
           console.warn("[YunxinIM] sendText error:", err);
         }
       },
+      resend: false,
     });
     return true;
   } catch (e) {
     console.warn("[YunxinIM] sendText threw:", e);
     return false;
   }
-}
-
-export function dispatchChatRoomMsg(msg: YunxinPayload) {
-  if (!chatRoomMsgCallback) {
-    console.log("[YunxinIM] chat room message ignored, callback not registered");
-    return;
-  }
-  chatRoomMsgCallback(msg);
 }
 
 // ===== IPC Listeners (main -> preload) =====
@@ -351,19 +411,22 @@ ipcRenderer.on(IPC.NIM_SEND_PLAY_COMMAND, (_event, text: string) => {
   sendChatroomText(text);
 });
 
-ipcRenderer.on(IPC.NIM_JOIN_CHATROOM, (_event, chatroomId: string, userId: string) => {
-  console.log("[YunxinIM] received joinChatroom from main:", chatroomId);
-  if (typeof chatroomId === "string" && chatroomId) {
-    performLoginIM(chatroomId, userId).catch((e) => {
-      console.warn("[YunxinIM] auto-join chatroom failed:", e);
-    });
+ipcRenderer.on(
+  IPC.NIM_JOIN_CHATROOM,
+  (_event, chatroomId: string, userId: string) => {
+    console.log("[YunxinIM] received joinChatroom from main:", chatroomId);
+    if (typeof chatroomId === "string" && chatroomId) {
+      performLoginIM(chatroomId, userId).catch((e) => {
+        console.warn("[YunxinIM] auto-join chatroom failed:", e);
+      });
+    }
   }
-});
+);
 
 // ===== Address Resolution =====
 
 function resolveAddressViaNIM(
-  nim: NimInstance,
+  nim: SDK.NIM,
   chatroomId: string,
   sessionId: number,
   maxRetries = 5
@@ -376,7 +439,11 @@ function resolveAddressViaNIM(
         return;
       }
       if (retryCount >= maxRetries) {
-        console.warn("[YunxinIM] getChatroomAddress failed after", maxRetries, "retries, proceeding with empty addresses");
+        console.warn(
+          "[YunxinIM] getChatroomAddress failed after",
+          maxRetries,
+          "retries, proceeding with empty addresses"
+        );
         resolve([]);
         return;
       }
@@ -389,12 +456,22 @@ function resolveAddressViaNIM(
             return;
           }
           if (err) {
-            console.warn("[YunxinIM] getChatroomAddress failed, retry", retryCount + 1, ":", err);
+            console.warn(
+              "[YunxinIM] getChatroomAddress failed, retry",
+              retryCount + 1,
+              ":",
+              err
+            );
             setTimeout(() => attempt(retryCount + 1), 1000);
             return;
           }
-          const resolved = data && Array.isArray(data.address) ? data.address : [];
-          console.log("[YunxinIM] getChatroomAddress resolved:", resolved.length, "addresses");
+          const resolved =
+            data && Array.isArray(data.address) ? data.address : [];
+          console.log(
+            "[YunxinIM] getChatroomAddress resolved:",
+            resolved.length,
+            "addresses"
+          );
           resolve(resolved);
         },
       });
@@ -413,7 +490,9 @@ export async function performLoginIM(
   const mySession = loginSessionId;
 
   if (loginPromise) {
-    console.log("[YunxinIM] loginIM superseding previous login, waiting for it to finish");
+    console.log(
+      "[YunxinIM] loginIM superseding previous login, waiting for it to finish"
+    );
     await loginPromise.catch(() => {});
     if (loginSessionId !== mySession) {
       return { code: -1, chatRoomId };
@@ -437,9 +516,9 @@ async function doLoginIM(
   setChatRoomState("entering", chatRoomId);
 
   try {
-    const sdk = await getSDK();
-
-    const tokenResult = await ipcRenderer.invoke(IPC.NIM_GET_LISTEN_TOGETHER_TOKEN) as {
+    const tokenResult = (await ipcRenderer.invoke(
+      IPC.NIM_GET_LISTEN_TOGETHER_TOKEN
+    )) as {
       code: number;
       data?: {
         imToken?: string;
@@ -458,7 +537,9 @@ async function doLoginIM(
       return { code: -1, chatRoomId };
     }
 
-    const account = String(tokenResult.data.imAccId || tokenResult.data.imUid || "");
+    const account = String(
+      tokenResult.data.imAccId || tokenResult.data.imUid || ""
+    );
     const token = String(tokenResult.data.imToken || "");
 
     if (!account || !token) {
@@ -466,44 +547,66 @@ async function doLoginIM(
       return { code: -1, chatRoomId };
     }
 
-    await initIMInstance(sdk, account, token);
+    await initIMInstance(account, token);
 
     if (loginSessionId !== currentSession) {
-      console.log("[YunxinIM] loginIM stale session after IM connect, aborting");
+      console.log(
+        "[YunxinIM] loginIM stale session after IM connect, aborting"
+      );
       return { code: -1, chatRoomId };
     }
 
-    const addrResult = await ipcRenderer.invoke(
+    const addrResult = (await ipcRenderer.invoke(
       IPC.NIM_GET_CHATROOM_ADDR,
       chatRoomId,
       userId || ""
-    ) as { addresses?: string[] };
+    )) as { addresses?: string[] };
 
     let addresses: string[] = Array.isArray(addrResult?.addresses)
       ? addrResult.addresses
       : [];
-    console.log("[YunxinIM] got", addresses.length, "chatroom addresses from API");
+    console.log(
+      "[YunxinIM] got",
+      addresses.length,
+      "chatroom addresses from API"
+    );
 
     if (loginSessionId !== currentSession) {
-      console.log("[YunxinIM] loginIM stale session after addr fetch, aborting");
+      console.log(
+        "[YunxinIM] loginIM stale session after addr fetch, aborting"
+      );
       return { code: -1, chatRoomId };
     }
 
     if (addresses.length === 0 && nimInstance) {
-      console.log("[YunxinIM] no addresses from API, trying NIM SDK getChatroomAddress");
-      addresses = await resolveAddressViaNIM(nimInstance, chatRoomId, currentSession);
-      console.log("[YunxinIM] got", addresses.length, "chatroom addresses from NIM SDK");
+      console.log(
+        "[YunxinIM] no addresses from API, trying NIM SDK getChatroomAddress"
+      );
+      addresses = await resolveAddressViaNIM(
+        nimInstance,
+        chatRoomId,
+        currentSession
+      );
+      console.log(
+        "[YunxinIM] got",
+        addresses.length,
+        "chatroom addresses from NIM SDK"
+      );
     }
 
     if (addresses.length === 0) {
-      console.warn("[YunxinIM] chatroom addresses empty after all resolution attempts, skipping chatroom init");
+      console.warn(
+        "[YunxinIM] chatroom addresses empty after all resolution attempts, skipping chatroom init"
+      );
       return { code: -1, chatRoomId };
     }
 
-    await initChatroomInstance(sdk, chatRoomId, addresses);
+    await initChatroomInstance(chatRoomId, addresses);
 
     if (loginSessionId !== currentSession) {
-      console.log("[YunxinIM] loginIM stale session after chatroom connect, aborting");
+      console.log(
+        "[YunxinIM] loginIM stale session after chatroom connect, aborting"
+      );
       return { code: -1, chatRoomId };
     }
 
@@ -522,6 +625,3 @@ async function doLoginIM(
     return { code: -1, chatRoomId };
   }
 }
-
-
-

@@ -44,14 +44,16 @@ export type ListenTogetherRemoteCommand = {
 };
 
 export function suppressListenTogetherPlaybackResume(songId: string) {
-  suppressListenTogetherReportUntil = Date.now() + LISTEN_TOGETHER_REMOTE_PAUSE_SUPPRESS_MS;
+  suppressListenTogetherReportUntil =
+    Date.now() + LISTEN_TOGETHER_REMOTE_PAUSE_SUPPRESS_MS;
   suppressListenTogetherReportSongId = songId;
   suppressListenTogetherPlayUntil = suppressListenTogetherReportUntil;
   suppressListenTogetherPlaySongId = songId;
 }
 
 export function suppressListenTogetherRemoteChangeEcho(songId: string) {
-  suppressListenTogetherReportUntil = Date.now() + LISTEN_TOGETHER_REMOTE_CHANGE_SUPPRESS_MS;
+  suppressListenTogetherReportUntil =
+    Date.now() + LISTEN_TOGETHER_REMOTE_CHANGE_SUPPRESS_MS;
   suppressListenTogetherReportSongId = songId;
 }
 
@@ -59,15 +61,23 @@ function getListenTogetherSongId() {
   return player.currentId.split("_", 1)[0] || player.currentId;
 }
 
-function reportListenTogetherPlayCommand(commandType: string, playStatus: string) {
+function reportListenTogetherPlayCommand(
+  commandType: string,
+  playStatus: string
+) {
   if (applyingRemoteCommand) {
-    console.log("[LT:PRELOAD] suppress echo from remote command application", commandType, playStatus);
+    console.log(
+      "[LT:PRELOAD] suppress echo from remote command application",
+      commandType,
+      playStatus
+    );
     return;
   }
   const songId = getListenTogetherSongId();
   if (
     Date.now() < suppressListenTogetherReportUntil &&
-    (!suppressListenTogetherReportSongId || suppressListenTogetherReportSongId === songId)
+    (!suppressListenTogetherReportSongId ||
+      suppressListenTogetherReportSongId === songId)
   ) {
     console.log("[LT:PRELOAD] suppress native echo", commandType, playStatus);
     return;
@@ -75,7 +85,13 @@ function reportListenTogetherPlayCommand(commandType: string, playStatus: string
 
   if (!songId) return;
 
-  console.log("[LT:PRELOAD] reportListenTogetherPlayCommand", commandType, playStatus, "song:", songId);
+  console.log(
+    "[LT:PRELOAD] reportListenTogetherPlayCommand",
+    commandType,
+    playStatus,
+    "song:",
+    songId
+  );
   lastReportedSongId = songId;
 
   ipcRenderer.send(IPC.LT_NATIVE_PLAY_COMMAND, {
@@ -92,7 +108,12 @@ function normalizeListenTogetherToken(value: string | undefined) {
 }
 
 function getRemoteSongId(commandInfo: ListenTogetherRemoteCommand) {
-  return commandInfo.targetSongId || commandInfo.songId || commandInfo.formerSongId || "";
+  return (
+    commandInfo.targetSongId ||
+    commandInfo.songId ||
+    commandInfo.formerSongId ||
+    ""
+  );
 }
 
 export async function applyRemoteListenTogetherCommand(
@@ -121,18 +142,29 @@ export async function applyRemoteListenTogetherCommand(
     if (shouldPause) {
       suppressListenTogetherPlaybackResume(remoteSongId || currentSongId);
     } else {
-      suppressListenTogetherReportUntil = Date.now() + LISTEN_TOGETHER_PLAY_SUPPRESS_MS;
+      suppressListenTogetherReportUntil =
+        Date.now() + LISTEN_TOGETHER_PLAY_SUPPRESS_MS;
       suppressListenTogetherReportSongId = remoteSongId || currentSongId;
     }
     const shouldPlay =
       !shouldPause &&
-      (playStatus === "PLAY" || commandType === "PLAY" || commandType === "PROGRESS" || commandType === "GOTO");
+      (playStatus === "PLAY" ||
+        commandType === "PLAY" ||
+        commandType === "PROGRESS" ||
+        commandType === "GOTO");
 
-    if (typeof progress === "number" && Number.isFinite(progress) && progress >= 0) {
+    if (
+      typeof progress === "number" &&
+      Number.isFinite(progress) &&
+      progress >= 0
+    ) {
       const now = Date.now();
       if (now - lastProgressSyncTime >= LISTEN_TOGETHER_PROGRESS_COOLDOWN_MS) {
         const nextTime = progress > 1000 ? progress / 1000 : progress;
-        if (Math.abs(player.audio.currentTime - nextTime) > LISTEN_TOGETHER_PROGRESS_SYNC_THRESHOLD) {
+        if (
+          Math.abs(player.audio.currentTime - nextTime) >
+          LISTEN_TOGETHER_PROGRESS_SYNC_THRESHOLD
+        ) {
           player.audio.currentTime = nextTime;
           lastProgressSyncTime = now;
         }
@@ -199,7 +231,8 @@ player.audio.addEventListener("play", () => {
   const songId = getListenTogetherSongId();
   if (
     Date.now() < suppressListenTogetherPlayUntil &&
-    (!suppressListenTogetherPlaySongId || suppressListenTogetherPlaySongId === songId)
+    (!suppressListenTogetherPlaySongId ||
+      suppressListenTogetherPlaySongId === songId)
   ) {
     console.log("[LT:PRELOAD] suppress remote pause resume", songId);
     player.audio.pause();
@@ -215,14 +248,25 @@ player.audio.addEventListener("play", () => {
   if (lastReportedSongId && lastReportedSongId !== songId) {
     if (
       Date.now() < suppressListenTogetherReportUntil &&
-      (!suppressListenTogetherReportSongId || suppressListenTogetherReportSongId === songId)
+      (!suppressListenTogetherReportSongId ||
+        suppressListenTogetherReportSongId === songId)
     ) {
-      console.log("[LT:PRELOAD] suppress native song-switch echo", lastReportedSongId, "->", songId);
+      console.log(
+        "[LT:PRELOAD] suppress native song-switch echo",
+        lastReportedSongId,
+        "->",
+        songId
+      );
       lastReportedSongId = songId;
       return;
     }
 
-    console.log("[LT:PRELOAD] song switch detected:", lastReportedSongId, "->", songId);
+    console.log(
+      "[LT:PRELOAD] song switch detected:",
+      lastReportedSongId,
+      "->",
+      songId
+    );
     ipcRenderer.send(IPC.LT_NATIVE_PLAY_COMMAND, {
       commandType: "NEXT",
       playStatus: "PLAY",

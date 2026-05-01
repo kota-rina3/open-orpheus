@@ -296,17 +296,20 @@ registerCallHandler<[string, string, "", string], void>(
   }
 );
 
-registerCallHandler<
-  [{ path: string; pathtype: string }],
-  [boolean]
->("app.systemVoiceHint", () => {
-  return [true];
-});
+registerCallHandler<[{ path: string; pathtype: string }], [boolean]>(
+  "app.systemVoiceHint",
+  () => {
+    return [true];
+  }
+);
 
-registerCallHandler<[], [{ fullscreen: boolean; self: boolean }]>("app.isAppFulllScreen", (event) => {
-  const wnd = BrowserWindow.fromWebContents(event.sender);
-  return [{ fullscreen: wnd?.isFullScreen() ?? false, self: false }];
-});
+registerCallHandler<[], [{ fullscreen: boolean; self: boolean }]>(
+  "app.isAppFulllScreen",
+  (event) => {
+    const wnd = BrowserWindow.fromWebContents(event.sender);
+    return [{ fullscreen: wnd?.isFullScreen() ?? false, self: false }];
+  }
+);
 
 registerCallbackHandler<
   [

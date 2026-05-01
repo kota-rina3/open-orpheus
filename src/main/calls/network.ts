@@ -75,7 +75,12 @@ registerCallHandler<
     : null;
 
   if (shouldBroadcastPlayCommand) {
-    console.log("[LT:NET] intercepted listen-together API, commandInfo:", listenTogetherCommandInfo ? JSON.stringify(listenTogetherCommandInfo).slice(0, 200) : "null");
+    console.log(
+      "[LT:NET] intercepted listen-together API, commandInfo:",
+      listenTogetherCommandInfo
+        ? JSON.stringify(listenTogetherCommandInfo).slice(0, 200)
+        : "null"
+    );
   }
 
   try {
@@ -128,7 +133,9 @@ registerCallHandler<
       try {
         const parsed = JSON.parse(blob);
         apiSuccess = isRecord(parsed) && parsed.code === 200;
-      } catch { /* non-JSON response */ }
+      } catch {
+        /* non-JSON response */
+      }
 
       if (apiSuccess) {
         broadcastListenTogetherPlayCommand(listenTogetherCommandInfo);

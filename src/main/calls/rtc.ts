@@ -11,7 +11,7 @@ registerCallHandler<[Record<string, unknown>], [boolean]>(
   (event, params) => {
     enterOrJoinRtc("enter", event.sender, params);
     return [true];
-  },
+  }
 );
 
 registerCallHandler<[Record<string, unknown>], [boolean]>(
@@ -19,7 +19,7 @@ registerCallHandler<[Record<string, unknown>], [boolean]>(
   (event, params) => {
     enterOrJoinRtc("join", event.sender, params);
     return [true];
-  },
+  }
 );
 
 registerCallHandler<[], [boolean]>("rtc.mute", () => {
@@ -38,5 +38,5 @@ registerCallHandler<[Record<string, unknown>], [boolean]>(
   "rtc.setAudioProfile",
   () => {
     return [true];
-  },
+  }
 );
