@@ -18,6 +18,10 @@ declare const orpheus: {
   getCacheStats: () => Promise<AllCacheStats>;
   clearResources: (category: "http" | "lyrics" | "wasm") => Promise<void>;
 
+  checkUpdate: (
+    ignoreCache = false
+  ) => Promise<import("../../../src/main/update").UpdateInfo | null>;
+
   openGpuInfo: () => Promise<void>;
 };
 

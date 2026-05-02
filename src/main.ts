@@ -224,6 +224,9 @@ app.on("ready", async () => {
     createWindow();
 
     markStarted();
+
+    // Run a update check
+    import("./main/update").then((m) => m.checkUpdate());
   } catch (error) {
     if (error) {
       dialog.showErrorBox(

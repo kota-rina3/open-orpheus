@@ -11,6 +11,9 @@ contextBridge.exposeInMainWorld("orpheus", {
   clearResources: (category: "http" | "lyrics") =>
     ipcRenderer.invoke("manage.clearResources", category),
 
+  checkUpdate: (ignoreCache = false) =>
+    ipcRenderer.invoke("manage.checkUpdate", ignoreCache),
+
   openGpuInfo: () => ipcRenderer.invoke("manage.openGpuInfo"),
 });
 

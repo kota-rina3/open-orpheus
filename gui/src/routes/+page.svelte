@@ -5,6 +5,10 @@
   import * as Sidebar from "$lib/components/ui/sidebar";
   import * as Dialog from "$lib/components/ui/dialog";
 
+  import type { UpdateInfo } from "../../../src/main/update";
+  import UpdateIcon from "@lucide/svelte/icons/circle-fading-arrow-up";
+  import RefreshCw from "@lucide/svelte/icons/refresh-cw";
+
   import Logo from "../../../assets/icon.svg";
 
   import GitHub from "$lib/assets/GitHub_Invertocat_Black_Clearspace.svg";
@@ -31,6 +35,7 @@
 
   import Bug from "@lucide/svelte/icons/bug";
   import Debug from "./Debug.svelte";
+  import { Button } from "$lib/components/ui/button";
 
   const items = [
     {
@@ -64,7 +69,33 @@
       component: Debug,
     },
   ];
+
+  let updateInfoPromise: Promise<UpdateInfo | null> = $state(
+    orpheus.checkUpdate()
+  );
+  let showUpdateDialog = $state(false);
 </script>
+
+<Dialog.Root bind:open={showUpdateDialog}>
+  <Dialog.Content>
+    {#await updateInfoPromise then updateInfo}
+      {#if updateInfo}
+        <Dialog.Title class="text-xl">发现新版本 Open Orpheus</Dialog.Title>
+        <Dialog.Description>
+          <p>
+            Open Orpheus 已更新到 <b>{updateInfo.version}</b
+            >。建议您更新以获得最佳体验。
+          </p>
+          <p class="mt-4 text-right">
+            <Button variant="link" href={updateInfo.url} target="_blank"
+              >查看详细信息</Button
+            >
+          </p>
+        </Dialog.Description>
+      {/if}
+    {/await}
+  </Dialog.Content>
+</Dialog.Root>
 
 <Sidebar.Provider>
   <Sidebar.Root
@@ -95,7 +126,17 @@
               <div class="text-center">
                 <img src={Logo} alt="Logo" class="m-auto h-24 w-24" />
                 <h1 class="text-3xl font-bold">Open Orpheus</h1>
-                <p>v{__APP_VERSION__}</p>
+                <p class="mt-2">
+                  v{__APP_VERSION__}<Button
+                    variant="ghost"
+                    size="icon-xs"
+                    class="ml-2 cursor-pointer"
+                    title="检查更新"
+                    onclick={() =>
+                      (updateInfoPromise = orpheus.checkUpdate(true))}
+                    ><RefreshCw /></Button
+                  >
+                </p>
               </div>
               <div class="flex justify-center">
                 {#each socials as social (social.name)}
@@ -139,6 +180,22 @@
         </Sidebar.GroupContent>
       </Sidebar.Group>
     </Sidebar.Content>
+    {#await updateInfoPromise then updateInfo}
+      {#if updateInfo}
+        <Sidebar.Footer>
+          <Sidebar.Menu>
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton
+                class="cursor-pointer text-orange-600 hover:text-orange-800"
+                onclick={() => (showUpdateDialog = true)}
+              >
+                <UpdateIcon />有新版本
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+          </Sidebar.Menu>
+        </Sidebar.Footer>
+      {/if}
+    {/await}
   </Sidebar.Root>
   <main class="h-screen flex-1 overflow-y-auto">
     <div class="w-full p-4 xl:mx-auto xl:w-4xl">

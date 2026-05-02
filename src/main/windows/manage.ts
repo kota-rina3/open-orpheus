@@ -6,6 +6,7 @@ import packManager from "../pack";
 import WebPack from "../packs/WebPack";
 import { wasm as wasmDir } from "../folders";
 import { lyricCacheManager, playCacheManager, urlCacheManager } from "../cache";
+import { checkUpdate } from "../update";
 
 let manageWndInstance: BrowserWindow | null = null;
 
@@ -89,6 +90,13 @@ export default function showManageWindow() {
       } else if (category === "wasm") {
         await rm(wasmDir, { recursive: true, force: true });
       }
+    }
+  );
+
+  manageWnd.webContents.ipc.handle(
+    "manage.checkUpdate",
+    async (event, ignoreCache) => {
+      return await checkUpdate(ignoreCache);
     }
   );
 
