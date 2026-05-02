@@ -1,5 +1,9 @@
 <script lang="ts">
   import { Button } from "$lib/components/ui/button";
+  import { getBridge } from "$lib/bridge";
+  import type { ManageContract } from "$bridge/manage-api";
+
+  const api = getBridge<ManageContract>("manage");
 
   function formatBytes(bytes: number): string {
     if (bytes === 0) return "0 B";
@@ -8,20 +12,20 @@
     return `${(bytes / 1024 ** i).toFixed(2)} ${units[i]}`;
   }
 
-  let statsPromise = $state(orpheus.getCacheStats());
-  let clearing = $state<Parameters<typeof orpheus.clearResources>[0] | null>(
-    null
-  );
+  let statsPromise = $state(api.cache.getStats());
+  let clearing = $state<
+    Parameters<ManageContract["cache"]["clearResources"]>[0] | null
+  >(null);
 
   async function clearResources(
-    category: Parameters<typeof orpheus.clearResources>[0]
+    category: Parameters<ManageContract["cache"]["clearResources"]>[0]
   ) {
     clearing = category;
     try {
-      await orpheus.clearResources(category);
+      await api.cache.clearResources(category);
     } finally {
       clearing = null;
-      statsPromise = orpheus.getCacheStats();
+      statsPromise = api.cache.getStats();
     }
   }
 

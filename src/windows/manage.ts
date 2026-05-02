@@ -1,20 +1,8 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge } from "electron";
 
+import { exposeApi } from "../bridge/preload";
 import * as kv from "../storage";
 
-contextBridge.exposeInMainWorld("orpheus", {
-  platform: process.platform,
-
-  getWebPackCommitHash: () => ipcRenderer.invoke("manage.getWebPackCommitHash"),
-
-  getCacheStats: () => ipcRenderer.invoke("manage.getCacheStats"),
-  clearResources: (category: "http" | "lyrics") =>
-    ipcRenderer.invoke("manage.clearResources", category),
-
-  checkUpdate: (ignoreCache = false) =>
-    ipcRenderer.invoke("manage.checkUpdate", ignoreCache),
-
-  openGpuInfo: () => ipcRenderer.invoke("manage.openGpuInfo"),
-});
+exposeApi("manage", { platform: process.platform });
 
 contextBridge.exposeInMainWorld("kv", kv);

@@ -1,9 +1,13 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import type { MenuAPI, MenuSkin } from "$lib/types";
+  import type { MenuSkin } from "$lib/types";
   import type { MenuItem, MenuItemBtn } from "./types";
   import { loadTemplates } from "./template";
   import MenuPanel from "./MenuPanel.svelte";
+  import { getBridge } from "$lib/bridge";
+  import type { MenuContract } from "$bridge/menu-api";
+
+  const api = getBridge<MenuContract>("menu");
 
   let items: MenuItem[] = $state([]);
   let cursorX = $state(0);
@@ -13,9 +17,9 @@
   let menuReady = $state(false);
   let hoveredIndex = $state(-1);
   let menuEl: HTMLDivElement | undefined = $state();
-  let waylandMode = $state(false);
+  let waylandMode = $state(api.wayland);
   let rawTemplates: Record<string, string> = {};
-  let isSubmenuMode = false;
+  let isSubmenuMode = api.submenu;
 
   // Submenu state
   let submenuItems: MenuItem[] | null = $state(null);
@@ -24,10 +28,6 @@
   let submenuParentIndex = $state(-1);
   let submenuHoveredIndex = $state(-1);
   let submenuEl: HTMLDivElement | undefined = $state();
-
-  function getApi(): MenuAPI {
-    return window.menuApi!;
-  }
 
   function applyColors(colors: MenuSkin) {
     const root = document.documentElement;
@@ -39,7 +39,7 @@
   }
 
   /** Once we know the cursor position, clamp the menu and make it visible. */
-  function commitMenuPosition(api: MenuAPI) {
+  function commitMenuPosition() {
     tick().then(() => {
       if (!menuEl) return;
       if (waylandMode) {
@@ -67,10 +67,6 @@
   }
 
   onMount(() => {
-    const api = getApi();
-    waylandMode = api.isWayland();
-    isSubmenuMode = api.isSubmenu();
-
     if (waylandMode) {
       api.pull().then((data) => {
         applyColors(data.colors);
@@ -84,10 +80,10 @@
         cursorY = data.cursorY ?? 0;
         menuTop = cursorY;
         visible = true;
-        commitMenuPosition(api);
+        commitMenuPosition();
       });
 
-      api.onUpdate((rawItems) => {
+      api.events.update((rawItems) => {
         items = rawItems as MenuItem[];
       });
     } else if (isSubmenuMode) {
@@ -134,10 +130,10 @@
         visible = true;
         menuReady = true;
         tick().then(startObserver);
-        commitMenuPosition(api);
+        commitMenuPosition();
       });
 
-      api.onUpdate((rawItems) => {
+      api.events.update((rawItems) => {
         items = rawItems as MenuItem[];
       });
     }
@@ -146,12 +142,12 @@
   function handleItemClick(item: MenuItem) {
     if (!item.enable) return;
     if (item.menu && item.children?.length) return;
-    getApi().itemClick(item.menu_id);
+    api.itemClick(item.menu_id);
   }
 
   function handleBtnClick(btn: MenuItemBtn) {
     if (!btn.enable) return;
-    getApi().btnClick(btn.id);
+    api.btnClick(btn.id);
   }
 
   function handleItemHover(index: number, item: MenuItem, event: MouseEvent) {
@@ -176,7 +172,7 @@
           if (submenuY + subRect.height > vh) submenuY = vh - subRect.height;
         });
       } else if (!isSubmenuMode && submenuParentIndex !== index) {
-        getApi().openSubmenu(
+        api.openSubmenu(
           $state.snapshot(item.children),
           rawTemplates,
           rect.right,
@@ -187,7 +183,7 @@
     } else {
       submenuItems = null;
       if (!waylandMode && submenuParentIndex !== -1) {
-        getApi().closeSubmenu();
+        api.closeSubmenu();
       }
       submenuParentIndex = -1;
     }
@@ -201,19 +197,19 @@
   function handleSubmenuItemClick(item: MenuItem) {
     if (!item.enable) return;
     if (item.menu && item.children?.length) return;
-    getApi().itemClick(item.menu_id);
+    api.itemClick(item.menu_id);
   }
 
   function handleOverlayClick(event: MouseEvent) {
     if (event.target === event.currentTarget) {
-      getApi().close();
+      api.close();
       visible = false;
     }
   }
 
   function handleKeydown(event: KeyboardEvent) {
     if (event.key === "Escape") {
-      getApi().close();
+      api.close();
       visible = false;
     }
   }

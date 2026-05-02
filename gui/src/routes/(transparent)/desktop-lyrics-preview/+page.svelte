@@ -2,6 +2,10 @@
   import { onMount, tick } from "svelte";
   import Lyrics from "$lib/components/Lyrics.svelte";
   import type { LyricsData, LyricStyleConfig } from "$lib/types";
+  import { getBridge } from "$lib/bridge";
+  import type { DesktopLyricsPreviewContract } from "$bridge/desktop-lyrics-api";
+
+  const api = getBridge<DesktopLyricsPreviewContract>("desktopLyricsPreview");
 
   function buildLyricsData(text: string): LyricsData {
     return {
@@ -63,9 +67,6 @@
   }
 
   onMount(async () => {
-    const api = window.desktopLyricsPreview;
-    if (!api) return;
-
     const { style, text } = await api.requestInit();
     lyricsData = buildLyricsData(text);
     lyricStyle = {
@@ -77,9 +78,8 @@
     };
     await tick();
     fitScale();
-    // Wait for scale to apply + repaint before signaling ready
     await tick();
-    setTimeout(api.ready, 10);
+    setTimeout(() => api.ready(), 10);
   });
 </script>
 

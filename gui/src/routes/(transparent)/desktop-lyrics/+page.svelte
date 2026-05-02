@@ -4,6 +4,10 @@
   import type { LyricsData, LyricStyleConfig } from "$lib/types";
   import IconButton from "$lib/components/IconButton.svelte";
   import { cn } from "$lib/utils";
+  import { getBridge } from "$lib/bridge";
+  import type { DesktopLyricsContract } from "$bridge/desktop-lyrics-api";
+
+  const api = getBridge<DesktopLyricsContract>("desktopLyrics");
 
   let lyricsData: LyricsData | null = $state(null);
   let currentTime = $state(0);
@@ -75,20 +79,16 @@
   $effect(() => {
     if (lyricStyle.vertical !== previousVertical) {
       previousVertical = lyricStyle.vertical;
-      const api = window.desktopLyrics;
-      api?.changeOrientation();
+      api.changeOrientation();
     }
   });
 
   onMount(() => {
-    const api = window.desktopLyrics;
-    if (!api) return;
-
-    api.onLyricsUpdate((data: LyricsData) => {
+    api.events.lyricsUpdate((data) => {
       lyricsData = data;
     });
 
-    api.onTimeUpdate((data: { currentTime: number; playing: boolean }) => {
+    api.events.timeUpdate((data) => {
       lastKnownTime = data.currentTime;
       lastUpdateTimestamp = performance.now();
       currentTime = data.currentTime;
@@ -100,11 +100,11 @@
       }
     });
 
-    api.onStyleUpdate((data: Partial<LyricStyleConfig>) => {
+    api.events.styleUpdate((data) => {
       lyricStyle = { ...lyricStyle, ...data };
     });
 
-    api.onPlayStateChange((isPlaying: boolean) => {
+    api.events.playStateChange((isPlaying) => {
       playing = isPlaying;
       if (playing) {
         lastUpdateTimestamp = performance.now();
@@ -114,11 +114,10 @@
       }
     });
 
-    api.onLockedChange((isLocked: boolean) => {
+    api.events.setLocked((isLocked) => {
       locked = isLocked;
     });
 
-    // Request full state from Player on load
     api.requestFullUpdate();
 
     return () => stopRaf();
@@ -126,8 +125,7 @@
 
   function onDrag() {
     if (locked) return;
-    const api = window.desktopLyrics;
-    api?.dragWindow();
+    api.dragWindow();
   }
 </script>
 
@@ -150,10 +148,7 @@
       <button
         bind:this={unlockButton}
         class="size-12 cursor-pointer"
-        onclick={() => {
-          const api = window.desktopLyrics;
-          api?.performAction("unlock");
-        }}
+        onclick={() => api.performAction("unlock")}
         title="解锁桌面歌词"
         ><img
           src="gui://skin/lrc/desk_icn_unlock.png"
@@ -170,10 +165,7 @@
           onmousedown={(e) => {
             e.stopPropagation();
           }}
-          onclick={() => {
-            const api = window.desktopLyrics;
-            api?.performAction(action);
-          }}
+          onclick={() => api.performAction(action)}
           class="cursor-pointer"
           imgClass="size-6"
           {title}

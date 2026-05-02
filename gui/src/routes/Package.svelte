@@ -1,5 +1,9 @@
-<script>
+<script lang="ts">
   import { Button } from "$lib/components/ui/button";
+  import { getBridge } from "$lib/bridge";
+  import type { ManageContract } from "$bridge/manage-api";
+
+  const api = getBridge<ManageContract>("manage");
 
   import versions from "../../../versions.json";
 </script>
@@ -10,7 +14,7 @@
   Orpheus 版本匹配的资源包版本以获得最佳体验。
 </p>
 <p class="mt-4 text-gray-700">
-  {#await orpheus.getWebPackCommitHash()}
+  {#await api.pack.getWebPackCommitHash()}
     推荐资源包版本：{versions.commit}
   {:then commitHash}
     当前资源包版本：{commitHash}{#if commitHash === versions.commit}（已是推荐版本）{:else}（推荐使用

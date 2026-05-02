@@ -5,10 +5,13 @@ import { BrowserWindow, ipcMain } from "electron";
 import photon from "@silvia-odwyer/photon-node";
 
 import { mainWindow, setWindowId, setWindowInputRegion } from "../window";
+import { dragWindow } from "@open-orpheus/window";
 import { parseLrc } from "../lyrics";
 import { sanitizeRelativePath } from "../util";
 import { storage } from "../folders";
 import { quitting } from "../lifecycle";
+import { registerIpcHandlers } from "../../bridge/register";
+import type { DesktopLyricsContract } from "../../bridge/desktop-lyrics-api";
 
 let desktopLyricsWindow: BrowserWindow | null = null;
 
@@ -58,43 +61,44 @@ export default function createDesktopLyricsWindow() {
     performAction("close");
   });
 
-  desktopLyricsWindow.webContents.ipc.handle(
-    "desktopLyrics.requestFullUpdate",
-    () => {
-      if (mainWindow) {
-        mainWindow.webContents.send("desktopLyrics.sendFullState");
-      }
-    }
-  );
-
-  desktopLyricsWindow.webContents.ipc.handle(
-    "desktopLyrics.performAction",
-    (_event, action: string) => {
-      performAction(action);
-    }
-  );
-
-  desktopLyricsWindow.webContents.ipc.handle(
-    "desktopLyrics.changeOrientation",
-    () => {
-      if (!desktopLyricsWindow || desktopLyricsWindow.isDestroyed()) return;
-
-      const sz = desktopLyricsWindow.getSize();
-      desktopLyricsWindow.setSize(sz[1], sz[0]);
-    }
-  );
-
-  desktopLyricsWindow.webContents.ipc.handle(
-    "desktopLyrics.setInputRegion",
-    (_event, x: number, y: number, width: number, height: number) => {
-      if (!desktopLyricsWindow || desktopLyricsWindow.isDestroyed()) return;
-      setWindowInputRegion(
-        desktopLyricsWindow,
-        Math.round(x),
-        Math.round(y),
-        Math.max(0, Math.round(width)),
-        Math.max(0, Math.round(height))
-      );
+  registerIpcHandlers<DesktopLyricsContract>(
+    desktopLyricsWindow.webContents,
+    "desktopLyrics",
+    {
+      requestFullUpdate: async () => {
+        if (mainWindow) {
+          mainWindow.webContents.send("desktopLyrics.sendFullState");
+        }
+      },
+      performAction: async (_event, action: string) => {
+        performAction(action);
+      },
+      changeOrientation: async () => {
+        if (!desktopLyricsWindow || desktopLyricsWindow.isDestroyed()) return;
+        const sz = desktopLyricsWindow.getSize();
+        desktopLyricsWindow.setSize(sz[1], sz[0]);
+      },
+      setInputRegion: async (
+        _event,
+        x: number,
+        y: number,
+        width: number,
+        height: number
+      ) => {
+        if (!desktopLyricsWindow || desktopLyricsWindow.isDestroyed()) return;
+        setWindowInputRegion(
+          desktopLyricsWindow,
+          Math.round(x),
+          Math.round(y),
+          Math.max(0, Math.round(width)),
+          Math.max(0, Math.round(height))
+        );
+      },
+      dragWindow: async () => {
+        if (!desktopLyricsWindow || desktopLyricsWindow.isDestroyed()) return;
+        const hwnd = desktopLyricsWindow.getNativeWindowHandle();
+        dragWindow(hwnd);
+      },
     }
   );
 }

@@ -7,6 +7,8 @@ import WebPack from "../packs/WebPack";
 import { wasm as wasmDir } from "../folders";
 import { lyricCacheManager, playCacheManager, urlCacheManager } from "../cache";
 import { checkUpdate } from "../update";
+import { registerIpcHandlers } from "../../bridge/register";
+import type { ManageContract } from "../../bridge/manage-api";
 
 let manageWndInstance: BrowserWindow | null = null;
 
@@ -36,77 +38,77 @@ export default function showManageWindow() {
   } else {
     manageWnd.loadURL("gui://frontend/");
   }
-  manageWnd.webContents.ipc.handle("manage.getWebPackCommitHash", async () => {
-    return packManager.getPack<WebPack>("web").getCommitHash();
-  });
+  registerIpcHandlers<ManageContract>(manageWnd.webContents, "manage", {
+    checkUpdate: async (event, ignoreCache: boolean) => await checkUpdate(ignoreCache),
 
-  manageWnd.webContents.ipc.handle("manage.getCacheStats", async () => {
-    const [playCacheInfo, httpStats, lyrics, wasm] = await Promise.all([
-      playCacheManager?.getInfo(),
-      urlCacheManager?.getStats(),
-      lyricCacheManager?.getStats(),
-      (async () => {
-        try {
-          const entries = await readdir(wasmDir, { withFileTypes: true });
-          const files = entries.filter((e) => e.isFile());
-          let sizeBytes = 0;
-          await Promise.all(
-            files.map(async (f) => {
-              try {
-                const s = await stat(resolve(wasmDir, f.name));
-                sizeBytes += s.size;
-              } catch {
-                // Skip
-              }
-            })
-          );
-          return { entryCount: files.length, sizeBytes };
-        } catch {
-          return { entryCount: 0, sizeBytes: 0 };
+    pack: {
+      getWebPackCommitHash: async () => {
+        return packManager.getPack<WebPack>("web").getCommitHash();
+      },
+    },
+
+    cache: {
+      getStats: async () => {
+        const [playCacheInfo, httpStats, lyrics, wasm] = await Promise.all([
+          playCacheManager?.getInfo(),
+          urlCacheManager?.getStats(),
+          lyricCacheManager?.getStats(),
+          (async () => {
+            try {
+              const entries = await readdir(wasmDir, { withFileTypes: true });
+              const files = entries.filter((e) => e.isFile());
+              let sizeBytes = 0;
+              await Promise.all(
+                files.map(async (f) => {
+                  try {
+                    const s = await stat(resolve(wasmDir, f.name));
+                    sizeBytes += s.size;
+                  } catch {
+                    // Skip
+                  }
+                })
+              );
+              return { entryCount: files.length, sizeBytes };
+            } catch {
+              return { entryCount: 0, sizeBytes: 0 };
+            }
+          })(),
+        ]);
+
+        return {
+          play: {
+            entryCount:
+              (await playCacheManager?.queryCacheTracks())?.length || 0,
+            sizeBytes: Math.round(
+              (playCacheInfo?.currentCachedSize || 0) * 1024 * 1024 * 1024
+            ),
+          },
+          http: httpStats ?? { entryCount: 0, sizeBytes: 0 },
+          lyrics: lyrics ?? { entryCount: 0, sizeBytes: 0 },
+          wasm,
+        };
+      },
+      clearResources: async (_event, category: "http" | "lyrics" | "wasm") => {
+        if (category === "http") {
+          await urlCacheManager?.clear();
+        } else if (category === "lyrics") {
+          await lyricCacheManager?.clear();
+        } else if (category === "wasm") {
+          await rm(wasmDir, { recursive: true, force: true });
         }
-      })(),
-    ]);
-
-    return {
-      play: {
-        entryCount: (await playCacheManager?.queryCacheTracks())?.length || 0,
-        sizeBytes: Math.round(
-          (playCacheInfo?.currentCachedSize || 0) * 1024 * 1024 * 1024
-        ),
       },
-      http: httpStats,
-      lyrics,
-      wasm,
-    };
-  });
+    },
 
-  manageWnd.webContents.ipc.handle(
-    "manage.clearResources",
-    async (_, category: "http" | "lyrics" | "wasm") => {
-      if (category === "http") {
-        await urlCacheManager?.clear();
-      } else if (category === "lyrics") {
-        await lyricCacheManager?.clear();
-      } else if (category === "wasm") {
-        await rm(wasmDir, { recursive: true, force: true });
-      }
-    }
-  );
-
-  manageWnd.webContents.ipc.handle(
-    "manage.checkUpdate",
-    async (event, ignoreCache) => {
-      return await checkUpdate(ignoreCache);
-    }
-  );
-
-  manageWnd.webContents.ipc.handle("manage.openGpuInfo", () => {
-    new BrowserWindow({
-      width: 800,
-      height: 600,
-      webPreferences: {
-        partition: "open-orpheus",
+    gpu: {
+      openInfo: async () => {
+        new BrowserWindow({
+          width: 800,
+          height: 600,
+          webPreferences: {
+            partition: "open-orpheus",
+          },
+        }).loadURL("chrome://gpu");
       },
-    }).loadURL("chrome://gpu");
+    },
   });
 }

@@ -6,6 +6,9 @@ const config: Config = {
     adapter: adapter({
       pages: "../.vite/build/gui",
     }),
+    alias: {
+      $bridge: "../src/bridge",
+    },
   },
   vitePlugin: {
     dynamicCompileOptions: ({ filename }: { filename: string }) =>

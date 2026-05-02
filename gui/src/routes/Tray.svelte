@@ -1,6 +1,10 @@
 <script lang="ts">
   import * as RadioGroup from "$lib/components/ui/radio-group";
   import * as Field from "$lib/components/ui/field";
+  import { getBridge } from "$lib/bridge";
+  import type { ManageContract } from "$bridge/manage-api";
+
+  const api = getBridge<ManageContract>("manage");
 
   type TrayClickBehavior =
     | "depends-on-main-window"
@@ -13,7 +17,7 @@
 <h1 class="text-2xl font-bold">托盘菜单</h1>
 <p class="mt-2 text-gray-700">选择托盘菜单如何响应你的操作。</p>
 
-{#if orpheus.platform === "linux"}
+{#if api.platform === "linux"}
   {#await clickBehaviorPromise then value}
     <RadioGroup.Root
       class="mt-2"

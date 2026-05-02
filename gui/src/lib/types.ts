@@ -36,63 +36,10 @@ export interface LyricStyleConfig {
   slogan: string;
 }
 
-export interface DesktopLyricsAPI {
-  onLyricsUpdate(callback: (data: LyricsData) => void): void;
-  onTimeUpdate(
-    callback: (data: { currentTime: number; playing: boolean }) => void
-  ): void;
-  onStyleUpdate(callback: (data: Partial<LyricStyleConfig>) => void): void;
-  onPlayStateChange(callback: (playing: boolean) => void): void;
-  onLockedChange(callback: (locked: boolean) => void): void;
-  requestFullUpdate(): void;
-  dragWindow(): void;
-  changeOrientation(): void;
-  setInputRegion(x: number, y: number, width: number, height: number): void;
-  performAction(action: string): void;
-}
-
-export interface DesktopLyricsPreviewAPI {
-  requestInit(): Promise<{ style: Record<string, unknown>; text: string }>;
-  ready(): void;
-}
-
 export interface MenuSkin {
   background: string;
   foreground: string;
   foregroundDisabled: string;
   separator: string;
   itemHover: string;
-}
-
-export interface MenuAPI {
-  onShow(
-    callback: (
-      items: unknown[],
-      templates: Record<string, string>,
-      cursorX: number,
-      cursorY: number,
-      colors: MenuSkin
-    ) => void
-  ): void;
-  onUpdate(callback: (items: unknown[]) => void): void;
-  pull(): Promise<{
-    items: unknown[];
-    templates: Record<string, string>;
-    colors: MenuSkin;
-    cursorX?: number;
-    cursorY?: number;
-  }>;
-  reportSize(width: number, height: number): void;
-  itemClick(menuId: string | null): void;
-  btnClick(btnId: string): void;
-  close(): void;
-  isWayland(): boolean;
-  isSubmenu(): boolean;
-  openSubmenu(
-    items: unknown[],
-    templates: Record<string, string>,
-    x: number,
-    y: number
-  ): void;
-  closeSubmenu(): void;
 }

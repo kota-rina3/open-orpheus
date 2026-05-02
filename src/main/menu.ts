@@ -19,6 +19,8 @@ import {
 } from "./menu/windows";
 import packManager from "./pack";
 import SkinPack from "./packs/SkinPack";
+import { registerIpcHandlers } from "../bridge/register";
+import type { MenuContract } from "../bridge/menu-api";
 
 registerMenuSkinUpdater();
 
@@ -160,47 +162,40 @@ export default class AppMenu extends EventTarget {
       this.close();
     };
 
-    const onItemClick = (
-      _event: Electron.IpcMainEvent,
-      menuId: string | null
-    ) => {
-      this.onClick?.(menuId);
-      dismiss();
-    };
-
-    const onBtnClick = (_event: Electron.IpcMainEvent, btnId: string) => {
-      this.onClick?.(btnId);
-    };
-
-    // Renderer sends menu.close when user clicks the overlay background or presses Escape
-    const onMenuClose = () => {
-      dismiss();
-    };
-
-    wnd.webContents.ipc.on("menu.itemClick", onItemClick);
-    wnd.webContents.ipc.on("menu.btnClick", onBtnClick);
-    wnd.webContents.ipc.on("menu.close", onMenuClose);
-
     wnd.on("blur", () => {
       dismiss();
     });
 
-    // Pull-based: the renderer calls menu.pull once SvelteKit has mounted.
-    // We show the window here, then wait for the native first-enter capture
-    // (or a short timeout fallback) before returning the initial cursor anchor.
-    wnd.webContents.ipc.handle("menu.pull", async () => {
-      if (!this.closed && !wnd.isDestroyed()) {
-        wnd.show();
-      }
-
-      const { cursorX, cursorY } = await cursorPosition;
-      return {
-        items: this.items,
-        templates: this.templates,
-        colors: menuSkin,
-        cursorX,
-        cursorY,
-      };
+    registerIpcHandlers<MenuContract>(wnd.webContents, "menu", {
+      // Pull-based: the renderer calls menu.pull once SvelteKit has mounted.
+      // We show the window here, then wait for the native first-enter capture
+      // (or a short timeout fallback) before returning the initial cursor anchor.
+      pull: async () => {
+        if (!this.closed && !wnd.isDestroyed()) {
+          wnd.show();
+        }
+        const { cursorX, cursorY } = await cursorPosition;
+        return {
+          items: this.items,
+          templates: this.templates,
+          colors: menuSkin,
+          cursorX,
+          cursorY,
+        };
+      },
+      itemClick: async (_event, menuId) => {
+        this.onClick?.(menuId);
+        dismiss();
+      },
+      btnClick: async (_event, btnId) => {
+        this.onClick?.(btnId);
+      },
+      close: async () => {
+        dismiss();
+      },
+      reportSize: async () => {},
+      openSubmenu: async () => {},
+      closeSubmenu: async () => {},
     });
   }
 
@@ -209,52 +204,6 @@ export default class AppMenu extends EventTarget {
     const wnd = createMenuWindow();
     const cursor = screen.getCursorScreenPoint();
     const display = screen.getDisplayNearestPoint(cursor);
-
-    // Send menu data; the renderer will measure and report back size
-    const onSizeReport = (
-      _event: Electron.IpcMainEvent,
-      width: number,
-      height: number
-    ) => {
-      if (this.closed || wnd.isDestroyed()) return;
-
-      // Clamp position so menu stays within the display
-      const { x: dx, y: dy, width: dw, height: dh } = display.workArea;
-      // Top half of work area → top-left anchor; bottom half → bottom-left anchor
-      const onBottomHalf = cursor.y > dy + dh / 2;
-      let x = cursor.x;
-      let y = onBottomHalf ? cursor.y - height : cursor.y;
-
-      if (x + width > dx + dw) x = dx + dw - width;
-      if (y + height > dy + dh) y = dy + dh - height;
-      if (x < dx) x = dx;
-      if (y < dy) y = dy;
-
-      wnd.setBounds({
-        x: Math.round(x),
-        y: Math.round(y),
-        width: Math.round(width),
-        height: Math.round(height),
-      });
-      wnd.showInactive();
-      wnd.focus();
-    };
-
-    const onItemClick = (
-      _event: Electron.IpcMainEvent,
-      menuId: string | null
-    ) => {
-      this.onClick?.(menuId);
-      this.close();
-    };
-
-    const onBtnClick = (_event: Electron.IpcMainEvent, btnId: string) => {
-      this.onClick?.(btnId);
-    };
-
-    const onMenuClose = () => {
-      this.close();
-    };
 
     const closeSubmenuWindow = () => {
       if (this.submenuWindow && !this.submenuWindow.isDestroyed()) {
@@ -306,9 +255,18 @@ export default class AppMenu extends EventTarget {
         if (this.submenuWindow === sub) this.submenuWindow = null;
       });
 
-      sub.webContents.ipc.on(
-        "menu.reportSize",
-        (_event, width: number, height: number) => {
+      registerIpcHandlers<MenuContract>(sub.webContents, "menu", {
+        pull: async () => {
+          return { items, templates, colors: menuSkin };
+        },
+        itemClick: async (_event, menuId) => {
+          this.onClick?.(menuId);
+          this.close();
+        },
+        btnClick: async (_event, btnId) => {
+          this.onClick?.(btnId);
+        },
+        reportSize: async (_event, width, height) => {
           if (sub.isDestroyed()) return;
           const { x: dx, y: dy, width: dw, height: dh } = subDisplay.workArea;
           let x = screenX;
@@ -324,19 +282,10 @@ export default class AppMenu extends EventTarget {
             height: Math.round(height),
           });
           sub.showInactive();
-        }
-      );
-
-      sub.webContents.ipc.on(
-        "menu.itemClick",
-        (_event, menuId: string | null) => {
-          this.onClick?.(menuId);
-          this.close();
-        }
-      );
-
-      sub.webContents.ipc.on("menu.btnClick", (_event, btnId: string) => {
-        this.onClick?.(btnId);
+        },
+        close: async () => {},
+        openSubmenu: async () => {},
+        closeSubmenu: async () => {},
       });
 
       sub.on("blur", () => {
@@ -348,23 +297,53 @@ export default class AppMenu extends EventTarget {
           }
         }, 100);
       });
-
-      sub.webContents.ipc.handle("menu.pull", () => {
-        return { items, templates, colors: menuSkin };
-      });
     };
 
-    wnd.webContents.ipc.on("menu.reportSize", onSizeReport);
-    wnd.webContents.ipc.on("menu.itemClick", onItemClick);
-    wnd.webContents.ipc.on("menu.btnClick", onBtnClick);
-    wnd.webContents.ipc.on("menu.close", onMenuClose);
-    wnd.webContents.ipc.on(
-      "menu.openSubmenu",
-      (_event, items, templates, relX, relY) => {
+    registerIpcHandlers<MenuContract>(wnd.webContents, "menu", {
+      // Pull-based bootstrap so renderer can always request data after mount.
+      pull: async () => {
+        return {
+          items: this.items,
+          templates: this.templates,
+          colors: menuSkin,
+        };
+      },
+      reportSize: async (_event, width, height) => {
+        if (this.closed || wnd.isDestroyed()) return;
+        const { x: dx, y: dy, width: dw, height: dh } = display.workArea;
+        const onBottomHalf = cursor.y > dy + dh / 2;
+        let x = cursor.x;
+        let y = onBottomHalf ? cursor.y - height : cursor.y;
+        if (x + width > dx + dw) x = dx + dw - width;
+        if (y + height > dy + dh) y = dy + dh - height;
+        if (x < dx) x = dx;
+        if (y < dy) y = dy;
+        wnd.setBounds({
+          x: Math.round(x),
+          y: Math.round(y),
+          width: Math.round(width),
+          height: Math.round(height),
+        });
+        wnd.showInactive();
+        wnd.focus();
+      },
+      itemClick: async (_event, menuId) => {
+        this.onClick?.(menuId);
+        this.close();
+      },
+      btnClick: async (_event, btnId) => {
+        this.onClick?.(btnId);
+      },
+      close: async () => {
+        this.close();
+      },
+      openSubmenu: async (_event, items, templates, relX, relY) => {
         openSubmenuWindow(items, templates, relX, relY);
-      }
-    );
-    wnd.webContents.ipc.on("menu.closeSubmenu", closeSubmenuWindow);
+      },
+      closeSubmenu: async () => {
+        closeSubmenuWindow();
+      },
+    });
 
     const blurCheck = () => {
       // If focus moved to the submenu window, keep the menu open
@@ -381,17 +360,11 @@ export default class AppMenu extends EventTarget {
       }
       if (!this.closed) {
         this.close();
-        onMenuClose();
       }
     };
 
     wnd.on("blur", () => {
       setTimeout(blurCheck, 100);
-    });
-
-    // Pull-based bootstrap so renderer can always request data after mount.
-    wnd.webContents.ipc.handle("menu.pull", () => {
-      return { items: this.items, templates: this.templates, colors: menuSkin };
     });
   }
 }
