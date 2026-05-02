@@ -514,7 +514,7 @@ registerCallHandler<[string, string, string, string, AddId3Request], void>(
         relPath = relPath.slice(0, -4) + originalExt;
       }
 
-      tagger.save(normalizePath(download, id3Info.media_rel_path));
+      tagger.save(normalizePath(download, relPath));
 
       tagger.dispose();
 
