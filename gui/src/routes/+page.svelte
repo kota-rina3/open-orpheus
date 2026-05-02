@@ -72,9 +72,7 @@
     },
   ];
 
-  let updateInfoPromise: Promise<UpdateInfo | null> = $state(
-    api.checkUpdate()
-  );
+  let updateInfoPromise: Promise<UpdateInfo | null> = $state(api.checkUpdate());
   let showUpdateDialog = $state(false);
 </script>
 
@@ -134,8 +132,7 @@
                     size="icon-xs"
                     class="ml-2 cursor-pointer"
                     title="检查更新"
-                    onclick={() =>
-                      (updateInfoPromise = api.checkUpdate(true))}
+                    onclick={() => (updateInfoPromise = api.checkUpdate(true))}
                     ><RefreshCw /></Button
                   >
                 </p>

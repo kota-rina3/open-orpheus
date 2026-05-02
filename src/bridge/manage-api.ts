@@ -15,7 +15,7 @@ export interface AllCacheStats {
 export interface ManageContract {
   platform: NodeJS.Platform;
 
-  checkUpdate(ignoreCache?: boolean): Promise<UpdateInfo | null>,
+  checkUpdate(ignoreCache?: boolean): Promise<UpdateInfo | null>;
 
   pack: {
     getWebPackCommitHash(): Promise<string>;

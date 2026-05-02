@@ -39,7 +39,8 @@ export default function showManageWindow() {
     manageWnd.loadURL("gui://frontend/");
   }
   registerIpcHandlers<ManageContract>(manageWnd.webContents, "manage", {
-    checkUpdate: async (event, ignoreCache: boolean) => await checkUpdate(ignoreCache),
+    checkUpdate: async (event, ignoreCache = false) =>
+      await checkUpdate(ignoreCache),
 
     pack: {
       getWebPackCommitHash: async () => {
