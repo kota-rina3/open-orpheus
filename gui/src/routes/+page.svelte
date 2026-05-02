@@ -7,6 +7,7 @@
 
   import type { UpdateInfo } from "../../../src/main/update";
   import UpdateIcon from "@lucide/svelte/icons/circle-fading-arrow-up";
+  import RefreshCw from "@lucide/svelte/icons/refresh-cw";
 
   import Logo from "../../../assets/icon.svg";
 
@@ -125,7 +126,17 @@
               <div class="text-center">
                 <img src={Logo} alt="Logo" class="m-auto h-24 w-24" />
                 <h1 class="text-3xl font-bold">Open Orpheus</h1>
-                <p>v{__APP_VERSION__}</p>
+                <p class="mt-2">
+                  v{__APP_VERSION__}<Button
+                    variant="ghost"
+                    size="icon-xs"
+                    class="ml-2 cursor-pointer"
+                    title="检查更新"
+                    onclick={() =>
+                      (updateInfoPromise = orpheus.checkUpdate(true))}
+                    ><RefreshCw /></Button
+                  >
+                </p>
               </div>
               <div class="flex justify-center">
                 {#each socials as social (social.name)}
