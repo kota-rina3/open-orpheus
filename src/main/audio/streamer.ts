@@ -1,19 +1,16 @@
-import type { IncomingHttpHeaders } from "node:http";
+import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
+import { Readable } from "node:stream";
 import { readFile } from "node:fs/promises";
-
 import mime from "mime";
 
 import type { AudioPlayInfo } from "../../preload/Player";
 import client from "../request";
 
 // #region Interval helpers
-
 type Interval = [start: number, end: number]; // inclusive [start, end]
-
 // #endregion
 
 // #region Per-song buffer state
-
 interface SongBuffer {
   songId: string;
   url: string;
@@ -46,10 +43,7 @@ export default class AudioStreamer extends EventTarget {
     let write = 0;
     for (let i = 0; i < intervals.length; i++) {
       if (write > 0 && intervals[i][0] <= intervals[write - 1][1] + 1) {
-        intervals[write - 1][1] = Math.max(
-          intervals[write - 1][1],
-          intervals[i][1]
-        );
+        intervals[write - 1][1] = Math.max(intervals[write - 1][1], intervals[i][1]);
       } else {
         intervals[write++] = intervals[i];
       }
@@ -58,11 +52,7 @@ export default class AudioStreamer extends EventTarget {
   }
 
   /** Return sub-ranges of [start, end] not yet covered by `have`. */
-  private static missingRanges(
-    have: Interval[],
-    start: number,
-    end: number
-  ): Interval[] {
+  private static missingRanges(have: Interval[], start: number, end: number): Interval[] {
     const missing: Interval[] = [];
     let cursor = start;
     for (const [s, e] of have) {
@@ -75,9 +65,7 @@ export default class AudioStreamer extends EventTarget {
   }
 
   private static downloadedBytes(intervals: Interval[]): number {
-    let total = 0;
-    for (const [s, e] of intervals) total += e - s + 1;
-    return total;
+    return intervals.reduce((total, [s, e]) => total + (e - s + 1), 0);
   }
 
   setPlayInfo(playInfo: AudioPlayInfo | null): void {
@@ -85,26 +73,19 @@ export default class AudioStreamer extends EventTarget {
   }
 
   private onProgress(progress: number): void {
-    this.dispatchEvent(
-      new CustomEvent<number>("progress", { detail: progress })
-    );
+    this.dispatchEvent(new CustomEvent<number>("progress", { detail: progress }));
   }
 
   private onComplete(): void {
     if (!this.songBuffer || !this.currentAudioPlayInfo) return;
-
     this.dispatchEvent(new Event("complete"));
   }
 
-  /** Extract total file size from a response's Content-Range or Content-Length headers. */
   private parseSizeFromHeaders(headers: IncomingHttpHeaders): {
     totalSize: number;
     contentType: string;
   } {
-    const getHeader = (value: string | string[] | undefined) => {
-      if (Array.isArray(value)) return value[0];
-      return value;
-    };
+    const getHeader = (v: string | string[] | undefined) => Array.isArray(v) ? v[0] : v;
 
     const contentType = getHeader(headers["content-type"]) ?? "audio/mpeg";
     const cr = getHeader(headers["content-range"]);
@@ -120,33 +101,42 @@ export default class AudioStreamer extends EventTarget {
     url: string,
     start: number,
     end?: number
-  ): Promise<{ stream: NodeJS.ReadableStream; headers: IncomingHttpHeaders }> {
-    const rangeValue =
-      end !== undefined ? `bytes=${start}-${end}` : `bytes=${start}-`;
+  ): Promise<{ stream: Readable; headers: IncomingHttpHeaders; actualStart: number }> {
+    const rangeValue = end !== undefined ? `bytes=${start}-${end}` : `bytes=${start}-`;
+    
+    // Cast to native node stream to ensure we have .destroy() and AsyncIterable support
     const stream = client.stream(url, {
       headers: { Range: rangeValue },
       throwHttpErrors: false,
+    }) as unknown as Readable;
+
+    const response = await new Promise<IncomingMessage>((resolve, reject) => {
+      stream.once("response", (res: IncomingMessage) => resolve(res));
+      stream.once("error", reject);
     });
 
-    const headers = await new Promise<IncomingHttpHeaders>(
-      (resolve, reject) => {
-        stream.once("response", (response) => resolve(response.headers));
-        stream.once("error", reject);
-      }
-    );
+    if (response.statusCode && response.statusCode >= 400) {
+      stream.destroy();
+      throw new Error(`Upstream HTTP Error: ${response.statusCode}`);
+    }
 
-    return { stream, headers };
+    let actualStart = start;
+    if (response.statusCode === 206) {
+      const cr = response.headers["content-range"];
+      if (typeof cr === "string") {
+        const match = cr.match(/bytes\s+(\d+)-/i);
+        if (match) actualStart = Number(match[1]);
+      }
+    } else if (response.statusCode === 200) {
+      actualStart = 0; // Server ignored Range header, sent whole file
+    }
+
+    return { stream, headers: response.headers, actualStart };
   }
 
-  private ensureSongBuffer(
-    songId: string,
-    url: string,
-    totalSize: number,
-    contentType: string
-  ): SongBuffer {
-    if (this.songBuffer && this.songBuffer.songId === songId) {
-      return this.songBuffer;
-    }
+  private ensureSongBuffer(songId: string, url: string, totalSize: number, contentType: string): SongBuffer {
+    if (this.songBuffer?.songId === songId) return this.songBuffer;
+
     this.songBuffer = {
       songId,
       url,
@@ -159,72 +149,62 @@ export default class AudioStreamer extends EventTarget {
     return this.songBuffer;
   }
 
-  /** Fetch a single contiguous range from upstream and write it into the buffer. */
-  private async fetchRange(
-    sb: SongBuffer,
-    start: number,
-    end: number
-  ): Promise<void> {
-    const { stream } = await this.openRangeStream(sb.url, start, end);
-    let offset = start;
-
-    for await (const value of stream as AsyncIterable<Buffer>) {
-      const chunk = Buffer.from(value);
-      chunk.copy(sb.buffer, offset);
-      offset += chunk.length;
-
-      AudioStreamer.mergeInterval(sb.intervals, [start, offset - 1]);
-      const pct = AudioStreamer.downloadedBytes(sb.intervals) / sb.totalSize;
-      this.onProgress(pct);
-    }
-
-    if (AudioStreamer.downloadedBytes(sb.intervals) >= sb.totalSize) {
-      this.onComplete();
-    }
-  }
-
-  /** Stream a pre-opened response body into the buffer and through the controller. */
-  private async streamResponseIntoBuffer(
-    sb: SongBuffer,
-    start: number,
-    stream: NodeJS.ReadableStream,
-    controller: ReadableStreamDefaultController<Uint8Array>
-  ): Promise<void> {
-    let offset = start;
-
-    for await (const value of stream as AsyncIterable<Buffer>) {
-      if (this.songBuffer !== sb) throw new Error("song changed");
-      const chunk = Buffer.from(value);
-      chunk.copy(sb.buffer, offset);
-      controller.enqueue(new Uint8Array(chunk));
-      offset += chunk.length;
-
-      AudioStreamer.mergeInterval(sb.intervals, [start, offset - 1]);
-      const pct = AudioStreamer.downloadedBytes(sb.intervals) / sb.totalSize;
-      this.onProgress(pct);
-    }
-
-    if (AudioStreamer.downloadedBytes(sb.intervals) >= sb.totalSize) {
-      this.onComplete();
-    }
-  }
-
-  /** Fetch a range from upstream, streaming chunks through the controller while writing to buffer. */
-  private async fetchRangeStreaming(
-    sb: SongBuffer,
-    start: number,
-    end: number,
-    controller: ReadableStreamDefaultController<Uint8Array>
-  ): Promise<void> {
-    const { stream } = await this.openRangeStream(sb.url, start, end);
-    await this.streamResponseIntoBuffer(sb, start, stream, controller);
-  }
-
   /**
-   * Build ordered segments (have/miss) for [start, end], then stream them in order:
-   * - "have" segments are enqueued from the buffer immediately
-   * - "miss" segments are fetched from upstream and streamed as chunks arrive
+   * Universal method that downloads chunks, saves them to the song buffer, and 
+   * optionally forwards precisely sliced bytes to the client stream controller.
    */
+  private async downloadAndCache(
+    sb: SongBuffer,
+    stream: Readable,
+    actualStart: number,
+    clientStream?: {
+      controller: ReadableStreamDefaultController<Uint8Array>;
+      reqStart: number;
+      reqEnd: number;
+    }
+  ): Promise<void> {
+    let offset = actualStart;
+
+    for await (const value of stream) {
+      if (this.songBuffer !== sb) {
+        stream.destroy();
+        throw new Error("Song changed");
+      }
+
+      const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value as Uint8Array | string);
+      if (offset >= sb.totalSize) break;
+
+      const writableLength = Math.min(chunk.length, sb.totalSize - offset);
+      chunk.copy(sb.buffer, offset, 0, writableLength);
+
+      const chunkStart = offset;
+      const chunkEnd = offset + writableLength - 1;
+
+      // Extract and stream ONLY the strict boundaries the client browser requested
+      if (clientStream && chunkEnd >= clientStream.reqStart && chunkStart <= clientStream.reqEnd) {
+        const sliceStart = Math.max(0, clientStream.reqStart - chunkStart);
+        const sliceEnd = Math.min(writableLength, clientStream.reqEnd - chunkStart + 1);
+        
+        const toEnqueue = chunk.subarray(sliceStart, sliceEnd);
+        if (toEnqueue.length > 0) {
+          clientStream.controller.enqueue(new Uint8Array(toEnqueue));
+        }
+      }
+
+      if (writableLength > 0) {
+        AudioStreamer.mergeInterval(sb.intervals, [chunkStart, chunkEnd]);
+      }
+      
+      offset += writableLength;
+      this.onProgress(AudioStreamer.downloadedBytes(sb.intervals) / sb.totalSize);
+    }
+
+    if (AudioStreamer.downloadedBytes(sb.intervals) >= sb.totalSize) {
+      this.onComplete();
+    }
+  }
+
+  /** Serves a range seamlessly by bridging cached buffer data and live fetched streams */
   private async streamRange(
     sb: SongBuffer,
     start: number,
@@ -238,11 +218,7 @@ export default class AudioStreamer extends EventTarget {
       if (s > end) break;
       if (e < cursor) continue;
       if (s > cursor) {
-        segments.push({
-          have: false,
-          start: cursor,
-          end: Math.min(s - 1, end),
-        });
+        segments.push({ have: false, start: cursor, end: Math.min(s - 1, end) });
       }
       const covStart = Math.max(s, cursor);
       const covEnd = Math.min(e, end);
@@ -252,65 +228,57 @@ export default class AudioStreamer extends EventTarget {
       cursor = Math.max(cursor, e + 1);
       if (cursor > end) break;
     }
-    if (cursor <= end) {
-      segments.push({ have: false, start: cursor, end });
-    }
+    if (cursor <= end) segments.push({ have: false, start: cursor, end });
 
     for (const seg of segments) {
-      if (this.songBuffer !== sb) throw new Error("song changed");
+      if (this.songBuffer !== sb) throw new Error("Song changed");
+
       if (seg.have) {
         const copy = new Uint8Array(seg.end - seg.start + 1);
         sb.buffer.copy(Buffer.from(copy.buffer), 0, seg.start, seg.end + 1);
         controller.enqueue(copy);
       } else {
-        await this.fetchRangeStreaming(sb, seg.start, seg.end, controller);
+        const { stream, actualStart } = await this.openRangeStream(sb.url, seg.start, seg.end);
+        await this.downloadAndCache(sb, stream, actualStart, { controller, reqStart: seg.start, reqEnd: seg.end });
       }
     }
-
-    controller.close();
   }
 
   private backgroundFetchFull(sb: SongBuffer): void {
     if (sb.backgroundFetchInProgress) return;
     sb.backgroundFetchInProgress = true;
 
-    const gaps = AudioStreamer.missingRanges(sb.intervals, 0, sb.totalSize - 1);
-    if (gaps.length === 0) {
-      sb.backgroundFetchInProgress = false;
-      return;
-    }
-
     void (async () => {
-      for (const gap of gaps) {
-        // Abort if song changed
-        if (this.songBuffer !== sb) return;
-        await this.fetchRange(sb, gap[0], gap[1]);
+      try {
+        while (this.songBuffer === sb) {
+          const gaps = AudioStreamer.missingRanges(sb.intervals, 0, sb.totalSize - 1);
+          if (gaps.length === 0) break;
+          
+          const { stream, actualStart } = await this.openRangeStream(sb.url, gaps[0][0], gaps[0][1]);
+          await this.downloadAndCache(sb, stream, actualStart);
+        }
+      } catch {
+        // Suppress background errors. Will gracefully resume later if user seeks.
+      } finally {
+        if (this.songBuffer === sb) sb.backgroundFetchInProgress = false;
       }
-      sb.backgroundFetchInProgress = false;
     })();
   }
 
   async handleRequest(songId: string, request: Request): Promise<Response> {
-    if (
-      !this.currentAudioPlayInfo ||
-      this.currentAudioPlayInfo.songId !== songId
-    ) {
-      return new Response("No audio play info available for this song", {
-        status: 404,
-      });
+    if (!this.currentAudioPlayInfo || this.currentAudioPlayInfo.songId !== songId) {
+      return new Response("No audio play info available for this song", { status: 404 });
     }
 
     if (this.currentAudioPlayInfo.type !== 4) {
-      // Local music, simply read from disk and return (no range support)
+      // Local file bypass
       const buf = await readFile(this.currentAudioPlayInfo.path);
       this.onProgress(1);
       this.onComplete();
       return new Response(buf, {
         status: 200,
         headers: {
-          "Content-Type":
-            mime.getType(this.currentAudioPlayInfo.path) ||
-            "application/octet-stream",
+          "Content-Type": mime.getType(this.currentAudioPlayInfo.path) || "application/octet-stream",
           "Content-Length": String(buf.length),
         },
       });
@@ -319,148 +287,73 @@ export default class AudioStreamer extends EventTarget {
     const url = this.currentAudioPlayInfo.musicurl;
     const rangeHeader = request.headers.get("range");
 
-    // Parse requested range (if any)
     let start = 0;
     let end: number | undefined;
+
     if (rangeHeader) {
       const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
-      if (!match) {
-        return new Response("Invalid range", { status: 416 });
-      }
+      if (!match) return new Response("Invalid range", { status: 416 });
       start = Number(match[1]);
       end = match[2] ? Number(match[2]) : undefined;
     }
 
-    // Lazily initialise the song buffer from the first upstream request
-    if (!this.songBuffer || this.songBuffer.songId !== songId) {
-      const firstUpstream = await this.openRangeStream(url, start, end);
-      const info = this.parseSizeFromHeaders(firstUpstream.headers);
-      if (!info.totalSize) {
-        return new Response("Could not determine file size", { status: 502 });
-      }
-      const sb = this.ensureSongBuffer(
-        songId,
-        url,
-        info.totalSize,
-        info.contentType
-      );
-      const resolvedEnd = end ?? sb.totalSize - 1;
+    let sb = this.songBuffer;
+    let initialStreamData: { stream: Readable; actualStart: number } | null = null;
 
-      if (
-        start >= sb.totalSize ||
-        resolvedEnd >= sb.totalSize ||
-        start > resolvedEnd
-      ) {
-        return new Response("Range not satisfiable", {
-          status: 416,
-          headers: { "Content-Range": `bytes */${sb.totalSize}` },
-        });
+    // Lazily fetch meta & construct SongBuffer on first connection
+    if (!sb || sb.songId !== songId) {
+      try {
+        const { stream, headers, actualStart } = await this.openRangeStream(url, start, end);
+        const info = this.parseSizeFromHeaders(headers);
+        
+        if (!info.totalSize) return new Response("Could not determine file size", { status: 502 });
+        
+        sb = this.ensureSongBuffer(songId, url, info.totalSize, info.contentType);
+        initialStreamData = { stream, actualStart }; // Kept so we don't throw away this response
+      } catch {
+        return new Response("Upstream stream initialization error", { status: 502 });
       }
-
-      // Stream the first response directly, then the rest via streamRange
-      const stream = new ReadableStream<Uint8Array>({
-        start: (controller) => {
-          this.streamResponseIntoBuffer(
-            sb,
-            start,
-            firstUpstream.stream,
-            controller
-          )
-            .then(() => {
-              controller.close();
-              if (rangeHeader) this.backgroundFetchFull(sb);
-            })
-            .catch(() => {
-              try {
-                controller.close();
-              } catch {
-                /* already closed */
-              }
-            });
-        },
-      });
-
-      if (!rangeHeader) {
-        return new Response(stream, {
-          status: 200,
-          headers: {
-            "Content-Type": sb.contentType,
-            "Content-Length": String(sb.totalSize),
-            "Accept-Ranges": "bytes",
-            "Cache-Control": "no-store",
-          },
-        });
-      }
-      return new Response(stream, {
-        status: 206,
-        headers: {
-          "Content-Type": sb.contentType,
-          "Content-Length": String(resolvedEnd - start + 1),
-          "Content-Range": `bytes ${start}-${resolvedEnd}/${sb.totalSize}`,
-          "Accept-Ranges": "bytes",
-          "Cache-Control": "no-store",
-        },
-      });
     }
 
-    const sb = this.songBuffer;
-    const resolvedEnd = end ?? sb.totalSize - 1;
+    const resolvedEnd = Math.min(end ?? sb.totalSize - 1, sb.totalSize - 1);
 
-    if (!rangeHeader) {
-      // Full request — stream from start to end
-      const stream = new ReadableStream<Uint8Array>({
-        start: (controller) => {
-          this.streamRange(sb, 0, sb.totalSize - 1, controller).catch(() => {
-            try {
-              controller.close();
-            } catch {
-              /* already closed */
-            }
-          });
-        },
-      });
-      return new Response(stream, {
-        status: 200,
-        headers: {
-          "Content-Type": sb.contentType,
-          "Content-Length": String(sb.totalSize),
-          "Accept-Ranges": "bytes",
-          "Cache-Control": "no-store",
-        },
-      });
-    }
-
-    if (
-      start >= sb.totalSize ||
-      resolvedEnd >= sb.totalSize ||
-      start > resolvedEnd
-    ) {
+    if (start >= sb.totalSize || start > resolvedEnd) {
       return new Response("Range not satisfiable", {
         status: 416,
         headers: { "Content-Range": `bytes */${sb.totalSize}` },
       });
     }
 
-    // Stream the requested range, then kick off background full download
     const stream = new ReadableStream<Uint8Array>({
-      start: (controller) => {
-        this.streamRange(sb, start, resolvedEnd, controller)
-          .then(() => this.backgroundFetchFull(sb))
-          .catch(() => {
-            try {
-              controller.close();
-            } catch {
-              /* already closed */
-            }
-          });
+      start: async (controller) => {
+        try {
+          if (initialStreamData) {
+            // First ever request optimization: use the already open connection
+            await this.downloadAndCache(sb, initialStreamData.stream, initialStreamData.actualStart, {
+              controller,
+              reqStart: start,
+              reqEnd: resolvedEnd,
+            });
+          } else {
+            // Standard bridging for pre-existing cache
+            await this.streamRange(sb, start, resolvedEnd, controller);
+          }
+          controller.close();
+        } catch (e) {
+          try { controller.error(e); } catch { /* Browser might have closed early */ }
+        } finally {
+          // Fire up background preloading
+          if (rangeHeader && this.songBuffer === sb) this.backgroundFetchFull(sb);
+        }
       },
     });
+
     return new Response(stream, {
-      status: 206,
+      status: rangeHeader ? 206 : 200,
       headers: {
         "Content-Type": sb.contentType,
         "Content-Length": String(resolvedEnd - start + 1),
-        "Content-Range": `bytes ${start}-${resolvedEnd}/${sb.totalSize}`,
+        ...(rangeHeader && { "Content-Range": `bytes ${start}-${resolvedEnd}/${sb.totalSize}` }),
         "Accept-Ranges": "bytes",
         "Cache-Control": "no-store",
       },
