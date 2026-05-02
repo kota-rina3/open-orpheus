@@ -1,6 +1,3 @@
-<script lang="ts" module>
-</script>
-
 <script lang="ts">
   import * as Sidebar from "$lib/components/ui/sidebar";
   import * as Dialog from "$lib/components/ui/dialog";
@@ -10,6 +7,11 @@
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
 
   import Logo from "../../../assets/icon.svg";
+
+  import { getBridge } from "$lib/bridge";
+  import type { ManageContract } from "$bridge/manage-api";
+
+  const api = getBridge<ManageContract>("manage");
 
   import GitHub from "$lib/assets/GitHub_Invertocat_Black_Clearspace.svg";
 
@@ -71,7 +73,7 @@
   ];
 
   let updateInfoPromise: Promise<UpdateInfo | null> = $state(
-    orpheus.checkUpdate()
+    api.checkUpdate()
   );
   let showUpdateDialog = $state(false);
 </script>
@@ -133,7 +135,7 @@
                     class="ml-2 cursor-pointer"
                     title="检查更新"
                     onclick={() =>
-                      (updateInfoPromise = orpheus.checkUpdate(true))}
+                      (updateInfoPromise = api.checkUpdate(true))}
                     ><RefreshCw /></Button
                   >
                 </p>
