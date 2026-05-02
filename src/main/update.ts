@@ -31,7 +31,7 @@ export async function checkUpdate(
     throw new Error("Invalid version syntaxes.");
   }
 
-  if (semver.lt(latest, current)) return (cachedUpdateInfo = null);
+  if (!semver.gt(latest, current)) return (cachedUpdateInfo = null);
 
   return (cachedUpdateInfo = {
     version: res.tag_name,
