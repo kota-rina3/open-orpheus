@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 
 import got from "got";
 import { pack as base } from "./folders";
@@ -10,11 +10,11 @@ import type Pack from "./packs/Pack";
 import versions from "../../versions.json";
 
 function chooseWebPackFile() {
-  const webPack = resolve(base, "web.pack");
+  const webPack = resolve(base, "package", "web.pack");
   if (existsSync(webPack)) {
     return webPack;
   }
-  const orpheusPack = resolve(base, "orpheus.ntpk");
+  const orpheusPack = resolve(base, "package", "orpheus.ntpk");
   if (existsSync(orpheusPack)) {
     return orpheusPack;
   }
@@ -50,7 +50,7 @@ export class PackManager extends EventTarget {
       packName: string,
       eventName: "skinpackloaded" | "skin2packloaded"
     ) => {
-      const skinPackPath = resolve(base, `${packName}.skin`);
+      const skinPackPath = resolve(base, "package", `${packName}.skin`);
       if (!existsSync(skinPackPath)) {
         throw new Error(`Skin pack file not found: ${skinPackPath}`);
       }
@@ -89,8 +89,6 @@ export class PackManager extends EventTarget {
   async downloadPackage(
     onProgress?: (progress: DownloadPackageProgress) => void
   ) {
-    const files = ["common.skin", "dark.skin", "native.ntpk", "orpheus.ntpk"];
-
     onProgress?.({
       step: "downloading",
       downloadedBytes: 0,
@@ -134,38 +132,63 @@ export class PackManager extends EventTarget {
       downloadedBytes
     );
 
-    const sevenZip = await import("7z-wasm").then((m) => m.default());
+    const stdoutBytes: number[] = [];
+    const sevenZip = await import("7z-wasm").then((m) =>
+      m.default({
+        stdout(charCode) {
+          stdoutBytes.push(charCode);
+        },
+      })
+    );
 
     const stream = sevenZip.FS.open("installer.exe", "w+");
     sevenZip.FS.write(stream, buf, 0, buf.length);
     sevenZip.FS.close(stream);
 
+    sevenZip.callMain(["l", "installer.exe"]);
+    const stdout = new TextDecoder().decode(new Uint8Array(stdoutBytes));
+    const lines = stdout.split("\n");
+    const headerIdx = lines.findIndex((l) => /\sName\s*$/.test(l));
+    const start = headerIdx + 2;
+    const end = lines.findIndex((l, i) => i > start && /^-{3,}/.test(l));
+
+    const fileList: string[] = lines
+      .slice(start, end)
+      .map((l) => l.trim().split(/\s+/).pop()!)
+      .filter(Boolean);
+
     onProgress?.({ step: "extracting" });
 
-    sevenZip.callMain([
-      "x",
-      "installer.exe",
-      ...files.map((f) => `package/${f}`),
-    ]);
+    const filesToExtract = fileList.filter(
+      (v) => v.startsWith("resource/") || v.startsWith("package/")
+    );
+
+    sevenZip.callMain(["x", "installer.exe", ...filesToExtract]);
 
     onProgress?.({
       step: "saving",
-      fileCount: files.length,
+      fileCount: filesToExtract.length,
       fileIndex: 0,
     });
 
-    await mkdir(base, { recursive: true }); // Ensure the base directory exists
+    try {
+      // We want no leftovers
+      await rm(base, { recursive: true, force: true });
+    } catch {
+      /* If fails, that's okay */
+    }
 
-    for (const [index, file] of files.entries()) {
+    for (const [index, file] of filesToExtract.entries()) {
       const destPath = resolve(base, file);
-      const buf = sevenZip.FS.readFile(`package/${file}`);
+      const buf = sevenZip.FS.readFile(file);
+      await mkdir(dirname(destPath), { recursive: true }); // Ensure the directory exists
       await writeFile(destPath, buf);
       onProgress?.({
         step: "saving",
         file,
-        fileCount: files.length,
+        fileCount: filesToExtract.length,
         fileIndex: index + 1,
-        progress: (index + 1) / files.length,
+        progress: (index + 1) / filesToExtract.length,
       });
     }
 
