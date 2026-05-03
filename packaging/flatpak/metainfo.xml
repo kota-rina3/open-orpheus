@@ -59,6 +59,12 @@
   </screenshots>
 
   <releases>
+    <release version="0.9.0" date="2026-05-03">
+      <description>
+        <p>Listen Together feature; new version check; fix downloaded MP3 files being saved with .ncm extension.</p>
+        <p xml:lang="zh-CN">一起听功能；新版本检查；修复下载的 MP3 被保存为 NCM 后缀的问题。</p>
+      </description>
+    </release>
     <release version="0.8.0" date="2026-05-01">
       <description>
         <p>Allow custom download/cache paths; fix X11 window dragging; fix Shell API Windows path handling; enforce initial download directory selection in Flatpak.</p>
