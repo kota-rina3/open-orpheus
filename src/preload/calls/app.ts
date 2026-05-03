@@ -96,14 +96,15 @@ registerCallHandler<[{ path: string; pathtype: string }], void>(
       return;
     }
 
-    const audio = new Audio();
-    audio.src = `audio://resource/${voice.path}`;
-    audio.crossOrigin = "anonymous";
-    const source = player.audioContext.createMediaElementSource(audio);
+    const response = await fetch(`audio://resource/${voice.path}`);
+    const arrayBuffer = await response.arrayBuffer();
+
+    const audioBuffer = await player.audioContext.decodeAudioData(arrayBuffer);
+
+    const source = player.audioContext.createBufferSource();
+    source.buffer = audioBuffer;
+
     source.connect(player.gainNode);
-    audio.addEventListener("ended", () => {
-      source.disconnect();
-    });
-    await audio.play();
+    source.start();
   }
 );
