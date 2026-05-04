@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
   <id>io.github.yucling.open-orpheus</id>
-  
+
   <name>Open Orpheus</name>
   <summary>Netease Cloud Music for Linux</summary>
   <summary xml:lang="zh-CN">Linux 版网易云音乐客户端</summary>
@@ -11,28 +11,28 @@
   </developer>
   <url type="homepage">https://github.com/YUCLing/open-orpheus</url>
   <url type="vcs-browser">https://github.com/YUCLing/open-orpheus</url>
-  
+
   <metadata_license>CC-BY-4.0</metadata_license>
   <project_license>MIT</project_license>
-  
+
   <supports>
     <control>pointing</control>
     <control>keyboard</control>
     <control>touch</control>
     <control>tablet</control>
   </supports>
-  
+
   <description>
     <p>**This app is only available in Chinese.**</p>
     <p>
-      Open Orpheus is an open-source implementation of Netease Cloud Music browser host, it allows the user to run Netease Cloud Music official client&apos;s web resources on Linux, with the best compatibility provided by this host.
+      Open Orpheus is an open-source implementation of Netease Cloud Music browser host, it allows the user to run Netease Cloud Music official client's web resources on Linux, with the best compatibility provided by this host.
     </p>
     <p xml:lang="zh-CN">**本应用当前仅提供中文界面。**</p>
     <p xml:lang="zh-CN">
       Open Orpheus 是网易云音乐浏览器宿主的开源实现，让用户可以在 Linux 上运行网易云音乐官方客户端的网页资源，并提供尽可能好的兼容性。
     </p>
   </description>
-  
+
   <launchable type="desktop-id">io.github.yucling.open-orpheus.desktop</launchable>
 
   <branding>
@@ -59,6 +59,17 @@
   </screenshots>
 
   <releases>
+    <release version="0.10.2" date="2026-05-04">
+      <url type="details">https://github.com/YUCLing/open-orpheus/releases/tag/v0.10.2</url>
+      <description>
+        <ul>
+          <li>Fixed cookie expiration time.</li>
+        </ul>
+        <ul xml:lang="zh-CN">
+          <li>修复 Cookie 过期时间。</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.10.1" date="2026-05-04">
       <description>
         <p>Fixes Cookie management.</p>
