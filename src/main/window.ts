@@ -5,9 +5,6 @@ import { app, BrowserWindow, shell } from "electron";
 import {
   getLastCreatedWindowId,
   isWayland,
-  createRegion,
-  destroyRegion,
-  regionAdd,
   setInputRegion,
 } from "@open-orpheus/window";
 
@@ -175,29 +172,26 @@ export function setWindowInputRegion(
   width: number,
   height: number
 ) {
-  if (os.platform() === "linux" && isWayland()) {
-    const props = windowProperties.get(wnd.id);
-    if (!props || !props.waylandId) return;
+  if (os.platform() === "linux") {
+    const region =
+      width <= 0 || height <= 0
+        ? null
+        : [
+            {
+              x,
+              y,
+              w: width,
+              h: height,
+            },
+          ];
+    if (isWayland()) {
+      const props = windowProperties.get(wnd.id);
+      if (!props || !props.waylandId) return;
 
-    if (width <= 0 || height <= 0) {
-      setInputRegion(props.waylandId, null);
-      return;
+      setInputRegion(props.waylandId, region);
+    } else {
+      setInputRegion(wnd.getNativeWindowHandle(), region);
     }
-
-    const regionToken = createRegion(props.waylandId);
-    if (!regionToken) return;
-
-    if (!regionAdd(regionToken, x, y, width, height)) {
-      destroyRegion(regionToken);
-      return;
-    }
-
-    if (!setInputRegion(props.waylandId, regionToken)) {
-      destroyRegion(regionToken);
-      return;
-    }
-
-    destroyRegion(regionToken);
   } else {
     // TODO: implement input region for non-wayland / non-linux platforms
   }

@@ -760,36 +760,6 @@ pub(super) fn send_xdg_toplevel_move() -> bool {
 
 // ── Input region APIs ──────────────────────────────────────────────────────
 
-pub(super) struct WlRegion {
-    fd: RawFd,
-    compositor_id: u32,
-    region_id: u32,
-}
-
-impl WlRegion {
-    pub fn to_token(&self) -> String {
-        format!(
-            "wl_region:{}:{}:{}",
-            self.fd, self.region_id, self.compositor_id
-        )
-    }
-
-    pub fn from_token(token: &str) -> Option<Self> {
-        let parts: Vec<&str> = token.strip_prefix("wl_region:")?.split(':').collect();
-        if parts.len() != 3 {
-            return None;
-        }
-        let fd = parts[0].parse::<i32>().ok()?;
-        let region_id = parts[1].parse::<u32>().ok()?;
-        let compositor_id = parts[2].parse::<u32>().ok()?;
-        Some(Self {
-            fd,
-            compositor_id,
-            region_id,
-        })
-    }
-}
-
 fn window_id_to_fd_and_surface(window_id: &str) -> Option<(RawFd, u32)> {
     let rest = window_id.strip_prefix("wayland:")?;
     let parts: Vec<&str> = rest.split(':').collect();
@@ -801,12 +771,7 @@ fn window_id_to_fd_and_surface(window_id: &str) -> Option<(RawFd, u32)> {
     Some((fd, wl_surface_id))
 }
 
-pub(super) fn create_region_for_window(window_id: &str) -> Option<WlRegion> {
-    let (fd, _) = window_id_to_fd_and_surface(window_id)?;
-    create_region(fd)
-}
-
-pub(super) fn create_region(fd: RawFd) -> Option<WlRegion> {
+fn create_region(fd: RawFd) -> Option<u32> {
     let (compositor_id, region_id) = {
         let conns = CONNS.get()?;
         let Ok(mut guard) = conns.lock() else {
@@ -814,7 +779,6 @@ pub(super) fn create_region(fd: RawFd) -> Option<WlRegion> {
         };
         let conn = guard.get_mut(&fd)?;
         let compositor_id = conn.compositor_id?;
-        // Use `?` here to gracefully abort if no stolen IDs are available yet
         let region_id = conn.alloc_injected_id()?;
         (compositor_id, region_id)
     };
@@ -838,63 +802,64 @@ pub(super) fn create_region(fd: RawFd) -> Option<WlRegion> {
         return None;
     }
 
-    Some(WlRegion {
-        fd,
-        compositor_id,
-        region_id,
-    })
+    Some(region_id)
 }
 
-pub(super) fn region_add(region: &WlRegion, x: i32, y: i32, w: i32, h: i32) -> bool {
+fn region_add(fd: RawFd, region_id: u32, x: i32, y: i32, w: i32, h: i32) -> bool {
     let hdr_word = (REQ_REGION_ADD as u32) | (24u32 << 16);
     let mut buf = [0u8; 24];
-    buf[0..4].copy_from_slice(&region.region_id.to_ne_bytes());
+    buf[0..4].copy_from_slice(&region_id.to_ne_bytes());
     buf[4..8].copy_from_slice(&hdr_word.to_ne_bytes());
     buf[8..12].copy_from_slice(&x.to_ne_bytes());
     buf[12..16].copy_from_slice(&y.to_ne_bytes());
     buf[16..20].copy_from_slice(&w.to_ne_bytes());
     buf[20..24].copy_from_slice(&h.to_ne_bytes());
 
-    super::hook::send_raw_msg(region.fd, &buf)
+    super::hook::send_raw_msg(fd, &buf)
 }
 
-pub(super) fn region_subtract(region: &WlRegion, x: i32, y: i32, w: i32, h: i32) -> bool {
-    let hdr_word = (REQ_REGION_SUBTRACT as u32) | (24u32 << 16);
-    let mut buf = [0u8; 24];
-    buf[0..4].copy_from_slice(&region.region_id.to_ne_bytes());
-    buf[4..8].copy_from_slice(&hdr_word.to_ne_bytes());
-    buf[8..12].copy_from_slice(&x.to_ne_bytes());
-    buf[12..16].copy_from_slice(&y.to_ne_bytes());
-    buf[16..20].copy_from_slice(&w.to_ne_bytes());
-    buf[20..24].copy_from_slice(&h.to_ne_bytes());
-
-    super::hook::send_raw_msg(region.fd, &buf)
-}
-
-pub(super) fn destroy_region(region: &WlRegion) -> bool {
+fn destroy_injected_region(fd: RawFd, region_id: u32) {
     let hdr_word = (REQ_REGION_DESTROY as u32) | (8u32 << 16);
     let mut buf = [0u8; 8];
-    buf[0..4].copy_from_slice(&region.region_id.to_ne_bytes());
+    buf[0..4].copy_from_slice(&region_id.to_ne_bytes());
     buf[4..8].copy_from_slice(&hdr_word.to_ne_bytes());
 
-    super::hook::send_raw_msg(region.fd, &buf)
+    super::hook::send_raw_msg(fd, &buf);
 }
 
-pub(super) fn set_input_region(window_id: &str, region: Option<&WlRegion>) -> bool {
+pub(super) fn set_input_region_rects(window_id: &str, rects: Option<&[super::Rect]>) -> bool {
     let (fd, wl_surface_id) = match window_id_to_fd_and_surface(window_id) {
         Some(v) => v,
         None => return false,
     };
 
-    let region_id = region.map(|r| r.region_id).unwrap_or(0);
+    let mut region_id = 0;
+
+    if let Some(rects) = rects {
+        if let Some(r_id) = create_region(fd) {
+            region_id = r_id;
+            for r in rects {
+                region_add(fd, region_id, r.x, r.y, r.w, r.h);
+            }
+        } else {
+            return false;
+        }
+    }
 
     let hdr_word = (REQ_SET_INPUT_REGION as u32) | (12u32 << 16);
     let mut buf = [0u8; 12];
     buf[0..4].copy_from_slice(&wl_surface_id.to_ne_bytes());
     buf[4..8].copy_from_slice(&hdr_word.to_ne_bytes());
-    buf[8..12].copy_from_slice(&region_id.to_ne_bytes());
+    buf[8..12].copy_from_slice(&region_id.to_ne_bytes()); // "0" acts safely as null identifier
 
-    super::hook::send_raw_msg(fd, &buf)
+    let res = super::hook::send_raw_msg(fd, &buf);
+
+    if region_id != 0 {
+        // Drop cache proxy directly. Re-allocation operates identically upon delete_id.
+        destroy_injected_region(fd, region_id);
+    }
+
+    res
 }
 
 pub(crate) fn init_state() {
