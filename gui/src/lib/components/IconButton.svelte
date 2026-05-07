@@ -15,8 +15,8 @@
     ...rest
   }: Omit<HTMLButtonAttributes, "disabled"> & {
     normal: string;
-    hover: string;
-    active: string;
+    hover?: string;
+    active?: string;
     disabled?: string;
     normalColor?: string;
     hoverColor?: string;
@@ -48,12 +48,12 @@
       "block group-hover/icon-btn:hidden group-active/icon-btn:hidden"
     )}
     {@render icon(
-      hover,
+      hover ?? normal,
       hoverColor ?? normalColor,
       "hidden group-hover/icon-btn:block group-active/icon-btn:hidden"
     )}
     {@render icon(
-      active,
+      active ?? hover ?? normal,
       activeColor ?? normalColor,
       "hidden group-hover/icon-btn:hidden group-active/icon-btn:block"
     )}

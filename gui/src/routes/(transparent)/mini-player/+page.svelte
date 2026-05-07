@@ -4,6 +4,8 @@
 
   import { getBridge } from "$lib/bridge";
 
+  import IconButton from "$lib/components/IconButton.svelte";
+
   import type {
     MiniPlayerContract,
     MiniPlayerFullState,
@@ -71,13 +73,13 @@
       // On Windows/macOS, `setIgnoreMouseEvent` is used instead of actual setting input regions
       for (const el of inputRegionElements) {
         if (el.matches(":hover")) {
-          // Dummy region to disable input
-          api.setInputRegions([{ x: 0, y: 0, width: 1, height: 1 }]);
+          // Enable input
+          api.setInputRegions([]);
           return;
         }
       }
-      // Enable input
-      api.setInputRegions([]);
+      // Dummy region to disable input
+      api.setInputRegions([{ x: 0, y: 0, width: 1, height: 1 }]);
     }
   }
 
@@ -102,6 +104,11 @@
   let showVolumeBar = $state(false);
   let showList = $state(false);
 
+  function noPropagation(e: MouseEvent) {
+    e.stopPropagation();
+    e.preventDefault();
+  }
+
   const inputRegionAttachment: Attachment = (element) => {
     addInputRegion(element);
     return () => {
@@ -110,35 +117,80 @@
   };
 </script>
 
-<div class="h-12" {@attach showVolumeBar && inputRegionAttachment}></div>
+<div
+  class="invisible h-12"
+  class:visible={showVolumeBar}
+  {@attach showVolumeBar && inputRegionAttachment}
+></div>
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-  class="h-12.5 border border-gray-400 bg-white"
-  onmousedown={() => api.dragWindow()}
+  class="flex h-12.5 items-center gap-2 border border-gray-400 bg-white"
+  onmousedown={(e) => (api.dragWindow(), e.preventDefault())}
   {@attach inputRegionAttachment}
 >
-  {#if playInfo}
-    <div class="flex h-full items-center gap-2 px-2 text-xs">
-      {#if coverUrl}
-        <img src={coverUrl} alt="" class="h-8 w-8 rounded object-cover" />
-      {/if}
-      {#if likeMark}
-        <p>Liked</p>
-      {/if}
-      {#if playState.playing}
-        <p>Playing</p>
-      {/if}
-      <span class="truncate">{playInfo.songName}</span>
-      <span class="truncate text-gray-500">{playInfo.artistName}</span>
-    </div>
+  {#if coverUrl}
+    <img src={coverUrl} alt="Cover" class="size-12" />
   {/if}
+  <div class="group relative flex flex-1 items-center justify-center gap-2">
+    {#if playInfo}
+      <div
+        class="absolute top-0 right-0 bottom-0 left-0 flex flex-col justify-center bg-white text-center text-sm group-hover:hidden"
+      >
+        <p>{playInfo.songName}</p>
+        <p class="text-gray-600">{playInfo.artistName}</p>
+      </div>
+    {/if}
+    <IconButton
+      class="size-6 cursor-pointer"
+      normal="gui://skin/btn/previous.svg"
+    />
+    <IconButton
+      class="size-10 cursor-pointer"
+      normal="gui://skin/btn/to{playState.playing ? 'pause' : 'play'}.svg"
+      hover="gui://skin/btn/to{playState.playing ? 'pause' : 'play'}_over.svg"
+    />
+    <IconButton
+      class="size-6 cursor-pointer"
+      normal="gui://skin/btn/next.svg"
+    />
+  </div>
+  <IconButton
+    class="size-6 cursor-pointer"
+    normal="gui://skin/btn/{likeMark ? 'loved' : 'love'}.svg"
+  />
+  <IconButton
+    class="size-6 cursor-pointer"
+    normal="gui://skin/btn/voice.svg"
+    onmousedown={noPropagation}
+    onclick={() => (showVolumeBar = !showVolumeBar)}
+  />
+  <IconButton
+    class="size-4 cursor-pointer"
+    normal="gui://skin/btn/showlist.svg"
+    onmousedown={noPropagation}
+    onclick={() => (showList = !showList)}
+  />
+  <div class="flex h-full flex-col p-1">
+    <IconButton
+      class="size-3 cursor-pointer"
+      normal="gui://skin/btn/close.svg"
+    />
+    <IconButton
+      class="size-3 cursor-pointer"
+      normal="gui://skin/btn/toweb.svg"
+    />
+  </div>
 </div>
-<div class="h-85" {@attach showList && inputRegionAttachment}>
+<div
+  class="invisible h-85 bg-white/85"
+  class:visible={showList}
+  {@attach showList && inputRegionAttachment}
+>
   {#if listData.items.length > 0}
-    <ul class="p-2 text-xs">
+    <ul class="text-xs">
       {#each listData.items as item (item.id)}
-        <li class:font-bold={item.id === listData.currentPlay}>
-          {item.title} - {item.artist}
+        <li class="h-8.5" class:font-bold={item.id === listData.currentPlay}>
+          {item.title}
         </li>
       {/each}
     </ul>
