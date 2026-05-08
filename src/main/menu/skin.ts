@@ -4,6 +4,7 @@ import packManager from "../pack";
 import SkinPack from "../packs/SkinPack";
 import type { MenuSkin } from "./types";
 import { extractColor } from "../skin/color";
+import { argbToCss } from "../skin/dui";
 
 export const menuSkin: MenuSkin = {
   background: "#fffffffa",
@@ -12,15 +13,6 @@ export const menuSkin: MenuSkin = {
   separator: "#0000001a",
   itemHover: "#e1ebfc",
 };
-
-/** Convert #AARRGGBB (ARGB) to CSS #RRGGBBAA. */
-function argbToCss(c: string): string {
-  if (c.length === 9 && c[0] === "#") {
-    // input: #AA RR GG BB  (indices 1-2, 3-4, 5-6, 7-8)
-    return `#${c.slice(3, 5)}${c.slice(5, 7)}${c.slice(7)}${c.slice(1, 3)}`;
-  }
-  return c;
-}
 
 function applyAlphaOverride(color: string, alphaDec?: string): string {
   if (!alphaDec) return color;

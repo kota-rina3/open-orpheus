@@ -1,4 +1,4 @@
-import type { BtnImages } from "../skin/dui";
+import { BtnImages } from "../../../types/dui";
 
 export type AppMenuItemBtn = {
   id: string;

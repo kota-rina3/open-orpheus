@@ -66,16 +66,8 @@
     {@const btn = btns[node.index]}
     {#if btn?.images}
       <IconButton
-        normal={btn.images.normal.uri}
-        hover={btn.images.hot?.uri ?? btn.images.normal.uri}
-        active={btn.images.pushed?.uri ?? btn.images.normal.uri}
-        disabled={!btn.enable
-          ? (btn.images.disabled?.uri ?? btn.images.normal.uri)
-          : undefined}
-        normalColor={btn.images.normal.color}
-        hoverColor={btn.images.hot?.color}
-        activeColor={btn.images.pushed?.color}
-        disabledColor={btn.images.disabled?.color}
+        images={btn.images}
+        disabled={!btn.enable}
         class="flex shrink-0 items-center justify-center {btn.enable
           ? 'cursor-pointer'
           : 'cursor-default'}"

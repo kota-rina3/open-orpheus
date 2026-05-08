@@ -1,16 +1,5 @@
 import { DOMParser, type Element } from "@xmldom/xmldom";
-
-export interface BtnState {
-  uri: string;
-  color?: string;
-}
-
-export interface BtnImages {
-  normal: BtnState;
-  hot?: BtnState;
-  pushed?: BtnState;
-  disabled?: BtnState;
-}
+import { BtnImages, BtnState } from "../../../types/dui";
 
 export type LayoutNode =
   | { type: "horizontal"; children: LayoutNode[] }
@@ -108,12 +97,31 @@ export function parseElementTemplate(xml: string): ElementTemplate | null {
   };
 }
 
+/** Convert #AARRGGBB (ARGB) to CSS #RRGGBBAA. */
+export function argbToCss(c: string): string {
+  if (c.length === 9 && c[0] === "#") {
+    // input: #AA RR GG BB  (indices 1-2, 3-4, 5-6, 7-8)
+    return `#${c.slice(3, 5)}${c.slice(5, 7)}${c.slice(7)}${c.slice(1, 3)}`;
+  }
+  return c;
+}
+
 /** Convert #AABBGGRR (ABGR) to CSS #RRGGBBAA. */
 export function abgrToCss(c: string): string {
   if (c.length === 9 && c[0] === "#") {
     return `#${c.slice(7)}${c.slice(5, 7)}${c.slice(3, 5)}${c.slice(1, 3)}`;
   }
   return c;
+}
+
+/** Parse a single state attribute string like file='btn/play.svg' svg_color='#ff483228'. */
+export function parseBtnState(attrs: string): BtnState | null {
+  const fileMatch = attrs.match(/file='([^']*)'/);
+  if (!fileMatch) return null;
+  const uri = fileMatch[1];
+  const colorMatch = attrs.match(/svg_color='([^']*)'/);
+  const color = colorMatch?.[1];
+  return { uri, color: color ? abgrToCss(color) : undefined };
 }
 
 /**
@@ -128,13 +136,8 @@ export function parseBtnUrl(url: string): BtnImages | null {
   let m;
   while ((m = stateRe.exec(url)) !== null) {
     const key = m[1].replace("image", "");
-    const attrs = m[2];
-    const fileMatch = attrs.match(/file='([^']*)'/);
-    if (!fileMatch) continue;
-    const uri = fileMatch[1];
-    const colorMatch = attrs.match(/svg_color='([^']*)'/);
-    const color = colorMatch?.[1];
-    states[key] = { uri, color: color ? abgrToCss(color) : undefined };
+    const state = parseBtnState(m[2]);
+    if (state) states[key] = state;
   }
 
   if (!states.normal) return null;

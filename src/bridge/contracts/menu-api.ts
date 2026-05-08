@@ -2,12 +2,9 @@ import type { MenuSkin } from "../../main/menu/types";
 import type { ElementTemplate } from "../../main/skin/dui";
 
 export type { MenuSkin } from "../../main/menu/types";
-export type {
-  BtnImages,
-  BtnState,
-  ElementTemplate,
-  LayoutNode,
-} from "../../main/skin/dui";
+export type { ElementTemplate, LayoutNode } from "../../main/skin/dui";
+
+export type { BtnImages, BtnState } from "../../../types/dui";
 
 export interface MenuPullResult {
   items: unknown[];

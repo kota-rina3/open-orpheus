@@ -16,6 +16,7 @@
     MiniPlayerPlayInfo,
     MiniPlayerPlayState,
     MiniPlayerListData,
+    MiniPlayerStyle,
   } from "$bridge/contracts/mini-player-api";
 
   const api = getBridge<MiniPlayerContract>("miniPlayer");
@@ -25,6 +26,7 @@
   let likeMark = $state(false);
   let playState = $state<MiniPlayerPlayState>({ playing: false });
   let listData = $state<MiniPlayerListData>({ items: [], currentPlay: null });
+  let style = $state<MiniPlayerStyle | null>(null);
 
   function applyFullState(state: MiniPlayerFullState) {
     playInfo = state.playInfo;
@@ -32,6 +34,7 @@
     likeMark = state.likeMark;
     playState = state.playState;
     listData = { items: state.listItems, currentPlay: state.currentPlay };
+    style = state.style;
   }
 
   onMount(async () => {
@@ -53,6 +56,9 @@
     api.events.showVolume((data) => {
       volume = data[0] * 100;
       showVolumeBar = true;
+    });
+    api.events.styleUpdate((newStyle) => {
+      style = newStyle;
     });
     api.events.fullStateUpdate(applyFullState);
 
@@ -98,7 +104,8 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-  class="flex h-12.5 items-center gap-2 border border-gray-400 bg-white"
+  class="flex h-12.5 items-center gap-2 border border-gray-400"
+  style:background={style?.background}
   onmousedown={(e) => {
     if (e.button != 0) return; // Only left button
     e.preventDefault();
@@ -122,22 +129,24 @@
   <div class="group relative flex flex-1 items-center justify-center gap-2">
     {#if playInfo}
       <div
-        class="absolute top-0 right-0 bottom-0 left-0 flex flex-col justify-center bg-white text-center text-sm group-hover:hidden"
+        class="absolute top-0 right-0 bottom-0 left-0 z-10 flex flex-col justify-center text-center text-sm group-hover:hidden"
+        style:background={style?.background}
       >
-        <p>{playInfo.songName}</p>
-        <p class="text-gray-600">{playInfo.artistName}</p>
+        <p style:color={style?.titleColor}>{playInfo.songName}</p>
+        <p style:color={style?.artistColor}>{playInfo.artistName}</p>
       </div>
     {/if}
     <IconButton
       class="size-6 cursor-pointer"
-      normal="gui://skin/btn/previous.svg"
+      imgClass="size-full"
+      images={style?.prevButton}
       onmousedown={noPropagation}
       onclick={() => api.fireCall("player.onaction", "prev", "miniPlayer")}
     />
     <IconButton
       class="size-10 cursor-pointer"
-      normal="gui://skin/btn/to{playState.playing ? 'pause' : 'play'}.svg"
-      hover="gui://skin/btn/to{playState.playing ? 'pause' : 'play'}_over.svg"
+      imgClass="size-full"
+      images={playState.playing ? style?.pauseButton : style?.playButton}
       onmousedown={noPropagation}
       onclick={() =>
         api.fireCall(
@@ -148,21 +157,24 @@
     />
     <IconButton
       class="size-6 cursor-pointer"
-      normal="gui://skin/btn/next.svg"
+      imgClass="size-full"
+      images={style?.nextButton}
       onmousedown={noPropagation}
       onclick={() => api.fireCall("player.onaction", "next", "miniPlayer")}
     />
   </div>
   <IconButton
     class="size-6 cursor-pointer"
-    normal="gui://skin/btn/{likeMark ? 'loved' : 'love'}.svg"
+    imgClass="size-full"
+    images={likeMark ? style?.lovedButton : style?.loveButton}
     onmousedown={noPropagation}
     onclick={() => api.fireCall("player.onlikeclick", "normal")}
   />
   <IconButton
     bind:element={volumeButtonEl}
     class="size-6 cursor-pointer"
-    normal="gui://skin/btn/voice.svg"
+    imgClass="size-full"
+    images={style?.volumeButton}
     onmousedown={noPropagation}
     onclick={() =>
       showVolumeBar
@@ -171,35 +183,50 @@
   />
   <IconButton
     class="size-4 cursor-pointer"
-    normal="gui://skin/btn/showlist.svg"
+    imgClass="size-full"
+    images={style?.listButton}
     onmousedown={noPropagation}
     onclick={() => (showList = !showList)}
   />
   <div class="flex h-full flex-col gap-0.5 p-1">
     <IconButton
       class="size-2.5 cursor-pointer"
-      normal="gui://skin/btn/close.svg"
+      imgClass="size-full"
+      images={style?.closeButton}
       onmousedown={noPropagation}
       onclick={() => api.fireCall("player.onrequestclose", "")}
     />
     <IconButton
       class="size-2.5 cursor-pointer"
-      normal="gui://skin/btn/toweb.svg"
+      imgClass="size-full"
+      images={style?.toWebButton}
       onmousedown={noPropagation}
       onclick={() => api.fireCall("player.onrequestchangetomain", "")}
     />
   </div>
 </div>
 <div
-  class="invisible h-85 overflow-y-auto bg-white/85"
+  class="invisible h-85 overflow-y-auto"
+  style:background={style?.list.background}
   class:visible={showList}
   {@attach showList && inputRegionAttachment}
 >
   {#if listData.items.length > 0}
-    <ul class="text-xs">
+    <ul
+      class="text-xs"
+      style:--item-bg={style?.list.itemBackground}
+      style:--hover-bg={style?.list.hoverBackground}
+      style:--selected-bg={style?.list.selectedBackground}
+      style:--playing-bg={style?.list.playingBackground}
+    >
       {#each listData.items as item (item.id)}
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
         <li
-          class="flex h-8.5 items-center select-none hover:bg-gray-400/50"
+          tabindex="0"
+          class="flex h-8.5 items-center select-none even:bg-(--item-bg) hover:bg-(--hover-bg) focus:bg-(--selected-bg){item.id ===
+          listData.currentPlay
+            ? ' bg-(--playing-bg)'
+            : ''}"
           ondblclick={() => api.fireCall("player.onrequestplay", item.id)}
           oncontextmenu={() => api.fireCall("player.onmenu", item.id)}
         >

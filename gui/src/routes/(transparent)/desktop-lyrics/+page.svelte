@@ -165,7 +165,8 @@
           normal={`gui://skin/lrc/${icon}_normal.svg`}
           hover={`gui://skin/lrc/${icon}_over.svg`}
           active={`gui://skin/lrc/${icon}_push.svg`}
-          disabled={disabled ? `gui://skin/lrc/${icon}_dis.svg` : undefined}
+          disable={`gui://skin/lrc/${icon}_dis.svg`}
+          {disabled}
           onmousedown={(e) => {
             e.stopPropagation();
           }}

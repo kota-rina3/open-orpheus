@@ -1,3 +1,5 @@
+import { BtnImages } from "../../../types/dui";
+
 export interface MiniPlayerPlayInfo {
   albumId: string;
   albumName: string;
@@ -37,6 +39,38 @@ export interface MiniPlayerFullState {
   currentPlay: string | null;
   playState: MiniPlayerPlayState;
   listItems: MiniPlayerListElement[];
+  style: MiniPlayerStyle | null;
+}
+
+export interface MiniPlayerStyle {
+  background: string;
+
+  titleColor: string;
+  artistColor: string;
+
+  prevButton: BtnImages;
+  playButton: BtnImages;
+  pauseButton: BtnImages;
+  nextButton: BtnImages;
+
+  loveButton: BtnImages;
+  lovedButton: BtnImages;
+
+  volumeButton: BtnImages;
+  volumeMutedButton: BtnImages;
+
+  listButton: BtnImages;
+
+  closeButton: BtnImages;
+  toWebButton: BtnImages;
+
+  list: {
+    background: string;
+    itemBackground: string;
+    hoverBackground: string;
+    selectedBackground: string;
+    playingBackground: string;
+  };
 }
 
 export type MiniPlayerShowVolumeRequest = [number, boolean];
@@ -50,6 +84,7 @@ export interface MiniPlayerContract {
     playStateUpdate(callback: (state: MiniPlayerPlayState) => void): void;
     listUpdate(callback: (data: MiniPlayerListData) => void): void;
     showVolume(callback: (data: MiniPlayerShowVolumeRequest) => void): void;
+    styleUpdate(callback: (style: MiniPlayerStyle | null) => void): void;
   };
 
   requestFullUpdate(): Promise<MiniPlayerFullState>;

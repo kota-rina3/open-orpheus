@@ -1,32 +1,47 @@
 <script lang="ts">
   import type { HTMLButtonAttributes } from "svelte/elements";
+  import type { BtnImages } from "$sharedTypes/dui";
 
   let {
     element = $bindable(),
+    images,
     normal,
     hover,
     active,
-    disabled,
+    disable,
     normalColor,
     hoverColor,
     activeColor,
-    disabledColor,
+    disableColor,
+    disabled,
     class: className,
     imgClass,
     ...rest
-  }: Omit<HTMLButtonAttributes, "disabled"> & {
+  }: HTMLButtonAttributes & {
     element?: HTMLElement | undefined;
-    normal: string;
+    images?: BtnImages;
+    normal?: string;
     hover?: string;
     active?: string;
-    disabled?: string;
+    disable?: string;
     normalColor?: string;
     hoverColor?: string;
     activeColor?: string;
-    disabledColor?: string;
+    disableColor?: string;
     class?: string;
     imgClass?: string;
   } = $props();
+
+  let _normal = $derived(normal ?? images?.normal.uri ?? "");
+  let _hover = $derived(hover ?? images?.hot?.uri ?? _normal);
+  let _active = $derived(active ?? images?.pushed?.uri ?? _hover ?? _normal);
+  let _disable = $derived(disable ?? images?.disabled?.uri);
+  let _normalColor = $derived(normalColor ?? images?.normal.color);
+  let _hoverColor = $derived(hoverColor ?? images?.hot?.color ?? _normalColor);
+  let _activeColor = $derived(
+    activeColor ?? images?.pushed?.color ?? _normalColor
+  );
+  let _disableColor = $derived(disableColor ?? images?.disabled?.color);
 </script>
 
 {#snippet icon(src: string, color: string | undefined, cls: string)}
@@ -43,25 +58,25 @@
 <button
   bind:this={element}
   class="group/icon-btn {className}"
-  disabled={!!disabled}
+  {disabled}
   {...rest}
 >
   {#if disabled}
-    {@render icon(disabled, disabledColor, "")}
+    {@render icon(_disable ?? _normal, _disableColor ?? _normalColor, "")}
   {:else}
     {@render icon(
-      normal,
-      normalColor,
+      _normal,
+      _normalColor,
       "block group-hover/icon-btn:hidden group-active/icon-btn:hidden"
     )}
     {@render icon(
-      hover ?? normal,
-      hoverColor ?? normalColor,
+      _hover,
+      _hoverColor,
       "hidden group-hover/icon-btn:block group-active/icon-btn:hidden"
     )}
     {@render icon(
-      active ?? hover ?? normal,
-      activeColor ?? normalColor,
+      _active,
+      _activeColor,
       "hidden group-hover/icon-btn:hidden group-active/icon-btn:block"
     )}
   {/if}
