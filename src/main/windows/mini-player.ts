@@ -76,6 +76,12 @@ const defaultStyle: MiniPlayerStyle = {
     hoverBackground: "rgba(0,0,0,0.05)",
     selectedBackground: "rgba(0,0,0,0.08)",
     playingBackground: "rgba(59,130,246,0.12)",
+    scrollBar: "rgba(0,0,0,0.1)",
+    playButton: btn("listplaying"),
+    pauseButton: btn("listpause"),
+    color: "#000000",
+    hoverColor: "#333333",
+    selectedColor: "#333333",
   },
 };
 
@@ -90,7 +96,9 @@ packManager.addEventListener("skin2packloaded", async () => {
     listHoverBg,
     listSelectedBg,
     listPlayingBg,
+    listScrollBarBg,
     skinBuf,
+    listElBuf,
   ] = await Promise.all(
     [
       "/mini/main/panel.png",
@@ -99,7 +107,9 @@ packManager.addEventListener("skin2packloaded", async () => {
       "/mini/list/hover.png",
       "/mini/list/selected.png",
       "/mini/list/playing.png",
+      "/mini/list/scrlbar.png",
       "/mini/skin.xml",
+      "/mini/list/element.xml",
     ].map((p) => skinPack.readFile(p))
   );
   const [
@@ -109,50 +119,35 @@ packManager.addEventListener("skin2packloaded", async () => {
     listHoverBgColor,
     listSelectedBgColor,
     listPlayingBgColor,
+    listScrollBarBgColor,
   ] = await Promise.all(
-    [bg, listBg, listItemBg, listHoverBg, listSelectedBg, listPlayingBg].map(
-      async (buf) => {
-        let img: photon.PhotonImage;
-        if (buf.subarray(0, 4).toString("ascii") === "8BPS") {
-          // It's a PSD, convert it (Netease is so freaking stupid)
-          const p = psd.parse(new Uint8Array(buf).buffer);
-          const data = await p.composite();
-          img = new photon.PhotonImage(new Uint8Array(data), p.width, p.height);
-        } else {
-          img = photon.PhotonImage.new_from_byteslice(buf);
-        }
-        return extractColor(img);
+    [
+      bg,
+      listBg,
+      listItemBg,
+      listHoverBg,
+      listSelectedBg,
+      listPlayingBg,
+      listScrollBarBg,
+    ].map(async (buf) => {
+      let img: photon.PhotonImage;
+      if (buf.subarray(0, 4).toString("ascii") === "8BPS") {
+        // It's a PSD, convert it (Netease is so freaking stupid)
+        const p = psd.parse(new Uint8Array(buf).buffer);
+        const data = await p.composite();
+        img = new photon.PhotonImage(new Uint8Array(data), p.width, p.height);
+      } else {
+        img = photon.PhotonImage.new_from_byteslice(buf);
       }
-    )
+      return extractColor(img);
+    })
   );
-
-  const xml = skinBuf.toString("utf-8");
-  const doc = new DOMParser().parseFromString(xml, "text/xml");
 
   const style: Partial<MiniPlayerStyle> = {};
 
   style.background = bgColor;
-  style.list = {
-    background: listBgColor,
-    itemBackground: listItemBgColor,
-    hoverBackground: listHoverBgColor,
-    selectedBackground: listSelectedBgColor,
-    playingBackground: listPlayingBgColor,
-  };
 
-  const labels = doc.getElementsByTagName("Label");
-  let labelsFound = 0;
-  for (const label of labels) {
-    const name = label.getAttribute("name");
-    if (name === "no_lrc_title") {
-      style.titleColor = argbToCss(label.getAttribute("textcolor")!);
-      labelsFound++;
-    } else if (name === "no_lrc_artist") {
-      style.artistColor = argbToCss(label.getAttribute("textcolor")!);
-      labelsFound++;
-    }
-    if (labelsFound >= 2) break;
-  }
+  const parser = new DOMParser();
 
   const parseWrapper = (attr: string): BtnState | null => {
     const state = parseBtnState(attr);
@@ -174,7 +169,24 @@ packManager.addEventListener("skin2packloaded", async () => {
     return images;
   };
 
-  const buttons = doc.getElementsByTagName("Button");
+  const skinXml = skinBuf.toString("utf-8");
+  const skinDoc = parser.parseFromString(skinXml, "text/xml");
+
+  const labels = skinDoc.getElementsByTagName("Label");
+  let labelsFound = 0;
+  for (const label of labels) {
+    const name = label.getAttribute("name");
+    if (name === "no_lrc_title") {
+      style.titleColor = argbToCss(label.getAttribute("textcolor")!);
+      labelsFound++;
+    } else if (name === "no_lrc_artist") {
+      style.artistColor = argbToCss(label.getAttribute("textcolor")!);
+      labelsFound++;
+    }
+    if (labelsFound >= 2) break;
+  }
+
+  const buttons = skinDoc.getElementsByTagName("Button");
   let btnsFound = 0;
   for (const btn of buttons) {
     const name = btn.getAttribute("name");
@@ -235,6 +247,54 @@ packManager.addEventListener("skin2packloaded", async () => {
     }
     if (btnsFound >= 11) break;
   }
+
+  const listStyle: Partial<MiniPlayerStyle["list"]> = {
+    background: listBgColor,
+    itemBackground: listItemBgColor,
+    hoverBackground: listHoverBgColor,
+    selectedBackground: listSelectedBgColor,
+    playingBackground: listPlayingBgColor,
+    scrollBar: listScrollBarBgColor,
+  };
+
+  const playLists = skinDoc.getElementsByTagName("PlayList");
+  for (const el of playLists) {
+    if (el.getAttribute("name") === "play_list") {
+      listStyle.color = argbToCss(el.getAttribute("itemtextcolor")!);
+      listStyle.hoverColor = argbToCss(el.getAttribute("itemhottextcolor")!);
+      listStyle.selectedColor = argbToCss(
+        el.getAttribute("itemselectedtextcolor")!
+      );
+      break;
+    }
+  }
+
+  const listElXml = listElBuf.toString("utf-8");
+  const listDoc = parser.parseFromString(listElXml, "text/xml");
+
+  const listLabels = listDoc.getElementsByTagName("Label");
+  for (const label of listLabels) {
+    const name = label.getAttribute("name");
+    if (name === "list_title") {
+      break;
+    }
+  }
+
+  const listBtns = listDoc.getElementsByTagName("Button");
+  btnsFound = 0;
+  for (const btn of listBtns) {
+    const name = btn.getAttribute("name");
+    if (name === "list_play") {
+      listStyle.playButton = extractBtnImagesFromElement(btn) ?? undefined;
+      btnsFound++;
+    } else if (name === "list_pause") {
+      listStyle.pauseButton = extractBtnImagesFromElement(btn) ?? undefined;
+      btnsFound++;
+    }
+    if (btnsFound >= 2) break;
+  }
+
+  style.list = listStyle as MiniPlayerStyle["list"];
 
   updateStyle(style as MiniPlayerStyle);
 });

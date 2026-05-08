@@ -104,7 +104,7 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-  class="flex h-12.5 items-center gap-2 border border-gray-400"
+  class="flex h-12.5 items-center gap-2"
   style:background={style?.background}
   onmousedown={(e) => {
     if (e.button != 0) return; // Only left button
@@ -123,17 +123,27 @@
       onmousedown={noPropagation}
       onclick={() => api.fireCall("player.onrequestchangetomain", "")}
     >
-      <img src={coverUrl} alt="Cover" class="size-12" />
+      <img src={coverUrl} alt="Cover" class="size-12.5" />
     </button>
   {/if}
   <div class="group relative flex flex-1 items-center justify-center gap-2">
     {#if playInfo}
       <div
-        class="absolute top-0 right-0 bottom-0 left-0 z-10 flex flex-col justify-center text-center text-sm group-hover:hidden"
+        class="absolute top-0 right-0 bottom-0 left-0 z-10 flex flex-col justify-center text-center text-sm whitespace-nowrap group-hover:hidden"
         style:background={style?.background}
       >
-        <p style:color={style?.titleColor}>{playInfo.songName}</p>
-        <p style:color={style?.artistColor}>{playInfo.artistName}</p>
+        <p
+          class="overflow-hidden text-ellipsis"
+          style:color={style?.titleColor}
+        >
+          {playInfo.songName}
+        </p>
+        <p
+          class="overflow-hidden text-ellipsis"
+          style:color={style?.artistColor}
+        >
+          {playInfo.artistName}
+        </p>
       </div>
     {/if}
     <IconButton
@@ -206,8 +216,10 @@
   </div>
 </div>
 <div
-  class="invisible h-85 overflow-y-auto"
+  class="playlist invisible h-85 overflow-y-auto"
   style:background={style?.list.background}
+  style:--scrollbar-bg={style?.list.background}
+  style:--scrollbar-thumb={style?.list.scrollBar}
   class:visible={showList}
   {@attach showList && inputRegionAttachment}
 >
@@ -218,6 +230,9 @@
       style:--hover-bg={style?.list.hoverBackground}
       style:--selected-bg={style?.list.selectedBackground}
       style:--playing-bg={style?.list.playingBackground}
+      style:color={style?.list.color}
+      style:--hover-color={style?.list.hoverColor}
+      style:--selected-color={style?.list.selectedColor}
     >
       {#each listData.items as item (item.id)}
         <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
@@ -225,19 +240,18 @@
           tabindex="0"
           class="flex h-8.5 items-center select-none even:bg-(--item-bg) hover:bg-(--hover-bg) focus:bg-(--selected-bg){item.id ===
           listData.currentPlay
-            ? ' bg-(--playing-bg)'
-            : ''}"
+            ? ' bg-(--playing-bg)!'
+            : ''} hover:text-(--hover-color) focus:text-(--selected-color)"
           ondblclick={() => api.fireCall("player.onrequestplay", item.id)}
           oncontextmenu={() => api.fireCall("player.onmenu", item.id)}
         >
           <div class="flex size-6 items-center justify-center">
             {#if item.id === listData.currentPlay}
-              <img
-                src="gui://skin/btn/list{playState.playing
-                  ? 'playing'
-                  : 'pause'}.svg"
-                class="size-4"
-                alt="Play Icon"
+              <IconButton
+                images={playState.playing
+                  ? style?.list.playButton
+                  : style?.list.pauseButton}
+                imgClass="size-4"
               />
             {/if}
           </div>
@@ -247,3 +261,13 @@
     </ul>
   {/if}
 </div>
+
+<style lang="scss">
+  .playlist::-webkit-scrollbar {
+    width: 8px;
+  }
+  .playlist::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 4px;
+  }
+</style>

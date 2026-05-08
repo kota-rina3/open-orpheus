@@ -70,6 +70,14 @@ export interface MiniPlayerStyle {
     hoverBackground: string;
     selectedBackground: string;
     playingBackground: string;
+    scrollBar: string;
+
+    playButton: BtnImages;
+    pauseButton: BtnImages;
+
+    color: string;
+    hoverColor: string;
+    selectedColor: string;
   };
 }
 
