@@ -2,6 +2,7 @@ import { join } from "node:path";
 
 import { BrowserWindow } from "electron";
 import photon from "@silvia-odwyer/photon-node";
+import psd from "@webtoon/psd";
 
 import { mainWindow, setWindowId } from "../window";
 import { registerIpcHandlers } from "../../bridge/register";
@@ -81,7 +82,6 @@ const defaultStyle: MiniPlayerStyle = {
 let style: MiniPlayerStyle = defaultStyle;
 
 packManager.addEventListener("skin2packloaded", async () => {
-  return;
   const skinPack = packManager.getPack<SkinPack>("skin2");
   const [
     bg,
@@ -111,11 +111,17 @@ packManager.addEventListener("skin2packloaded", async () => {
     listPlayingBgColor,
   ] = await Promise.all(
     [bg, listBg, listItemBg, listHoverBg, listSelectedBg, listPlayingBg].map(
-      (buf) => {
-        const img = photon.PhotonImage.new_from_byteslice(buf);
-        const clr = extractColor(img);
-        img.free();
-        return clr;
+      async (buf) => {
+        let img: photon.PhotonImage;
+        if (buf.subarray(0, 4).toString("ascii") === "8BPS") {
+          // It's a PSD, convert it (Netease is so freaking stupid)
+          const p = psd.parse(new Uint8Array(buf).buffer);
+          const data = await p.composite();
+          img = new photon.PhotonImage(new Uint8Array(data), p.width, p.height);
+        } else {
+          img = photon.PhotonImage.new_from_byteslice(buf);
+        }
+        return extractColor(img);
       }
     )
   );
