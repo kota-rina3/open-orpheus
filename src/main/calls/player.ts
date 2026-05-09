@@ -1,3 +1,4 @@
+import { MiniPlayerLikeMark } from "$sharedTypes/mini-player";
 import { registerCallHandler } from "../calls";
 import {
   updatePlayInfo,
@@ -6,6 +7,7 @@ import {
   updatePlayState,
   updateListData,
   showVolume,
+  updateFavour,
 } from "../windows/mini-player";
 
 let listItems: ListElement[] = [];
@@ -23,7 +25,6 @@ export type PlayInfo = {
 
 registerCallHandler<[PlayInfo], void>("player.setInfo", (_event, playInfo) => {
   updatePlayInfo(playInfo);
-  updateCoverUrl(playInfo.url);
 });
 
 type ListElement = {
@@ -79,11 +80,18 @@ registerCallHandler<[string], [boolean]>("player.setCover", (_event, url) => {
   return [true];
 });
 
-registerCallHandler<[0 | 1], [boolean]>(
+registerCallHandler<[MiniPlayerLikeMark], [boolean]>(
   "player.setLikeMark",
   (_event, likeMark) => {
-    const like = likeMark > 0;
-    updateLikeMark(like);
+    updateLikeMark(likeMark);
+    return [true];
+  }
+);
+
+registerCallHandler<[0 | 1], [boolean]>(
+  "player.setFavour",
+  (_event, favour) => {
+    updateFavour(favour > 0);
     return [true];
   }
 );

@@ -1,5 +1,11 @@
 import type { BtnImages } from "./dui";
 
+export enum MiniPlayerLikeMark {
+  Unliked = 0,
+  Liked = 1,
+  UseFavour = 2,
+}
+
 export interface MiniPlayerPlayInfo {
   albumId: string;
   albumName: string;
@@ -35,7 +41,8 @@ export interface MiniPlayerListData {
 export interface MiniPlayerFullState {
   playInfo: MiniPlayerPlayInfo | null;
   coverUrl: string | null;
-  likeMark: boolean;
+  likeMark: MiniPlayerLikeMark;
+  favour: boolean;
   currentPlay: string | null;
   playState: MiniPlayerPlayState;
   listItems: MiniPlayerListElement[];
@@ -55,6 +62,9 @@ export interface MiniPlayerStyle {
 
   loveButton: BtnImages;
   lovedButton: BtnImages;
+
+  favourButton: BtnImages;
+  favouredButton: BtnImages;
 
   volumeButton: BtnImages;
   volumeMutedButton: BtnImages;

@@ -6,14 +6,7 @@ import psd from "@webtoon/psd";
 
 import { mainWindow, setWindowId } from "../window";
 import { registerIpcHandlers } from "../../bridge/register";
-import {
-  MiniPlayerContract,
-  MiniPlayerPlayInfo,
-  MiniPlayerPlayState,
-  MiniPlayerListElement,
-  MiniPlayerFullState,
-  MiniPlayerStyle,
-} from "../../bridge/contracts/mini-player-api";
+import { MiniPlayerContract } from "../../bridge/contracts/mini-player-api";
 import type { BtnImages, BtnState } from "../../../types/dui";
 import { dragWindow } from "@open-orpheus/window";
 import { registerInputRegionHandlers } from "../../bridge/common/inputRegion";
@@ -22,13 +15,22 @@ import SkinPack from "../packs/SkinPack";
 import { extractColor } from "../skin/color";
 import { DOMParser, Element } from "@xmldom/xmldom";
 import { argbToCss, parseBtnState } from "../skin/dui";
+import {
+  MiniPlayerLikeMark,
+  MiniPlayerPlayInfo,
+  MiniPlayerPlayState,
+  MiniPlayerListElement,
+  MiniPlayerFullState,
+  MiniPlayerStyle,
+} from "$sharedTypes/mini-player";
 
 let miniPlayerWindow: BrowserWindow | null = null;
 
 // State
 let playInfo: MiniPlayerPlayInfo | null = null;
 let coverUrl: string | null = null;
-let likeMark = false;
+let likeMark: MiniPlayerLikeMark = 0;
+let favour = false;
 let currentPlay: string | null = null;
 let playState: MiniPlayerPlayState = { playing: false };
 let listItems: MiniPlayerListElement[] = [];
@@ -61,6 +63,9 @@ const defaultStyle: MiniPlayerStyle = {
 
   loveButton: btn("love"),
   lovedButton: btn("loved"),
+
+  favourButton: btn("praise"),
+  favouredButton: btn("praise"),
 
   volumeButton: btn("voice"),
   volumeMutedButton: btn("voice_muted"),
@@ -221,6 +226,14 @@ packManager.addEventListener("skin2packloaded", async () => {
         }
         break;
       }
+      case "favour": {
+        if (style.favourButton) {
+          style.favouredButton = extractBtnImagesFromElement(btn) ?? undefined;
+        } else {
+          style.favourButton = extractBtnImagesFromElement(btn) ?? undefined;
+        }
+        break;
+      }
       case "volume": {
         style.volumeButton = extractBtnImagesFromElement(btn) ?? undefined;
         break;
@@ -245,7 +258,7 @@ packManager.addEventListener("skin2packloaded", async () => {
         btnsFound--;
         break;
     }
-    if (btnsFound >= 11) break;
+    if (btnsFound >= 13) break;
   }
 
   const listStyle: Partial<MiniPlayerStyle["list"]> = {
@@ -315,9 +328,14 @@ export function updateCoverUrl(url: string | null) {
   sendToMiniPlayer("coverUpdate", url);
 }
 
-export function updateLikeMark(liked: boolean) {
+export function updateLikeMark(liked: MiniPlayerLikeMark) {
   likeMark = liked;
   sendToMiniPlayer("likeUpdate", liked);
+}
+
+export function updateFavour(favourited: boolean) {
+  favour = favourited;
+  sendToMiniPlayer("favourUpdate", favourited);
 }
 
 export function updatePlayState(playing: boolean) {
@@ -348,6 +366,7 @@ export function getFullState(): MiniPlayerFullState {
     playInfo,
     coverUrl,
     likeMark,
+    favour,
     currentPlay,
     playState,
     listItems,

@@ -10,20 +10,22 @@
 
   import IconButton from "$lib/components/IconButton.svelte";
 
+  import type { MiniPlayerContract } from "$bridge/contracts/mini-player-api";
   import type {
-    MiniPlayerContract,
+    MiniPlayerLikeMark,
     MiniPlayerFullState,
     MiniPlayerPlayInfo,
     MiniPlayerPlayState,
     MiniPlayerListData,
     MiniPlayerStyle,
-  } from "$bridge/contracts/mini-player-api";
+  } from "$sharedTypes/mini-player";
 
   const api = getBridge<MiniPlayerContract>("miniPlayer");
 
   let playInfo = $state<MiniPlayerPlayInfo | null>(null);
   let coverUrl = $state<string | null>(null);
-  let likeMark = $state(false);
+  let likeMark = $state<MiniPlayerLikeMark>(0);
+  let favour = $state(false);
   let playState = $state<MiniPlayerPlayState>({ playing: false });
   let listData = $state<MiniPlayerListData>({ items: [], currentPlay: null });
   let style = $state<MiniPlayerStyle | null>(null);
@@ -32,6 +34,7 @@
     playInfo = state.playInfo;
     coverUrl = state.coverUrl;
     likeMark = state.likeMark;
+    favour = state.favour;
     playState = state.playState;
     listData = { items: state.listItems, currentPlay: state.currentPlay };
     style = state.style;
@@ -46,6 +49,9 @@
     });
     api.events.likeUpdate((liked) => {
       likeMark = liked;
+    });
+    api.events.favourUpdate((favourited) => {
+      favour = favourited;
     });
     api.events.playStateUpdate((state) => {
       playState = state;
@@ -173,13 +179,23 @@
       onclick={() => api.fireCall("player.onaction", "next", "miniPlayer")}
     />
   </div>
-  <IconButton
-    class="size-6 cursor-pointer"
-    imgClass="size-full"
-    images={likeMark ? style?.lovedButton : style?.loveButton}
-    onmousedown={noPropagation}
-    onclick={() => api.fireCall("player.onlikeclick", "normal")}
-  />
+  {#if likeMark < 2}
+    <IconButton
+      class="size-6 cursor-pointer"
+      imgClass="size-full"
+      images={likeMark === 1 ? style?.lovedButton : style?.loveButton}
+      onmousedown={noPropagation}
+      onclick={() => api.fireCall("player.onlikeclick", "normal")}
+    />
+  {:else}
+    <IconButton
+      class="size-6 cursor-pointer"
+      imgClass="size-full"
+      images={favour ? style?.favouredButton : style?.favourButton}
+      onmousedown={noPropagation}
+      onclick={() => api.fireCall("player.onfavour", favour ? 0 : 1)}
+    />
+  {/if}
   <IconButton
     bind:element={volumeButtonEl}
     class="size-6 cursor-pointer"
