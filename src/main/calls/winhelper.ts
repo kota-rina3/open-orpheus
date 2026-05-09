@@ -84,7 +84,7 @@ registerCallHandler<[string], void>(
     if (!wnd) return;
 
     const icon = await loadFromOrpheusUrl(iconPath);
-    const buf = await pngFromIco(icon.content);
+    const buf = pngFromIco(icon.content);
     const image = nativeImage.createFromBuffer(Buffer.from(buf));
     wnd.setIcon(image);
   }

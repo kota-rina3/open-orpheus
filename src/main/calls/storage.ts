@@ -342,7 +342,7 @@ registerCallHandler<[string, boolean, string, number, string[]], void>(
             continue;
           }
 
-          if (!(await isMusicFile(entry.name))) continue;
+          if (!isMusicFile(entry.name)) continue;
 
           const fullPath = normalizePath(entry.parentPath, entry.name);
           if (excludeSet.has(fullPath)) continue;

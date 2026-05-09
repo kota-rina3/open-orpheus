@@ -219,6 +219,8 @@ app.on("ready", async () => {
     initializeDatabases();
 
     await Promise.all([
+      // Initialize util module
+      import("./main/util").then((m) => m.default()),
       import("./main/channel"),
       import("./main/request").then((m) => m.setupRequestInterceptors()),
       // Make sure we handle KV storage IPC calls

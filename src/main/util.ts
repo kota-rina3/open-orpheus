@@ -3,8 +3,15 @@ import os from "node:os";
 
 import { BrowserWindow, screen } from "electron";
 
-export async function pngFromIco(icoData: Uint8Array): Promise<Uint8Array> {
-  const photon = await import("@silvia-odwyer/photon-node");
+let photon: typeof import("@silvia-odwyer/photon-node") | null = null;
+let mime: typeof import("mime") | null = null;
+
+function ensureModule<T>(mod: T): asserts mod is NonNullable<T> {
+  if (!mod) throw new Error("util is not initialized");
+}
+
+export function pngFromIco(icoData: Uint8Array): Uint8Array {
+  ensureModule(photon);
   const icoImage = photon.PhotonImage.new_from_byteslice(icoData);
   const pngData = icoImage.get_bytes();
   return pngData;
@@ -63,7 +70,14 @@ export function getWindowScaleFactor(wnd: BrowserWindow): number {
   return screen.getDisplayMatching(bounds).scaleFactor;
 }
 
-export async function isMusicFile(fileOrPath: string): Promise<boolean> {
-  const mime = await import("mime");
+export function isMusicFile(fileOrPath: string): boolean {
+  ensureModule(mime);
   return mime.default.getType(fileOrPath)?.startsWith("audio/") || false;
+}
+
+export default async function initialize() {
+  [photon, mime] = await Promise.all([
+    import("@silvia-odwyer/photon-node"),
+    import("mime"),
+  ]);
 }

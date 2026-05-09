@@ -92,7 +92,7 @@ function createButtonFactory(
 ): (btn: Button) => Promise<ThumbarButton> {
   return async (btn: Button) => {
     const icon = await loadFromOrpheusUrl(btn.url);
-    const buf = await pngFromIco(icon.content);
+    const buf = pngFromIco(icon.content);
     return {
       tooltip: btn.tooltip,
       icon: nativeImage.createFromBuffer(Buffer.from(buf)),

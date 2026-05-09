@@ -145,7 +145,7 @@ registerCallHandler<[MusicLibraries], void>(
       { recursive: true },
       async (eventType, filename) => {
         if (!filename) return;
-        if (!(await isMusicFile(filename))) return;
+        if (!isMusicFile(filename)) return;
         const filePath = path.join(libPath, filename);
         const db = getMusicLibraryDb();
         if (existsSync(filePath)) {
@@ -187,7 +187,7 @@ registerCallHandler<[MusicLibraries, number], [boolean]>(
 
     const entries = await readdir(libPath, { recursive: true });
     for (const relative of entries) {
-      if (!(await isMusicFile(relative))) continue;
+      if (!isMusicFile(relative)) continue;
       const filePath = path.join(libPath, relative);
       const entry = await trackEntryFromFile(library, filePath);
       db.exec("DELETE FROM track WHERE file = ?", [filePath]);
