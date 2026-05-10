@@ -75,7 +75,6 @@ jobs:
             --title "v${{ inputs.version }}" \
             ${{ inputs.pre_release && '--prerelease' || '' }} \
             ${{ inputs.previous_tag && format('--notes-start-tag "{0}"', inputs.previous_tag) || '' }} \
-            ${{ inputs.discussion_category && format('--discussion-category "{0}"', inputs.discussion_category) || '' }}
 
       - name: Fetch auto-generated release notes
         if: ${{ !inputs.skip_commit }}
@@ -255,6 +254,7 @@ jobs:
           gh release edit "v${{ inputs.version }}" \
             --draft=false \
             ${{ inputs.pre_release && '--prerelease' || '' }}
+            ${{ inputs.discussion_category && format('--discussion-category "{0}"', inputs.discussion_category) || '' }}
 
       - name: Trigger Flathub publish workflow
         continue-on-error: true
