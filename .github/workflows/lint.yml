@@ -30,7 +30,7 @@ jobs:
 
       - name: Build native modules
         shell: bash
-        run: PREFER_SCRIPT=prepack pnpm build:modules
+        run: PREFER_SCRIPT=types pnpm build:modules
 
       - name: Run ESLint
         run: pnpm lint:eslint
