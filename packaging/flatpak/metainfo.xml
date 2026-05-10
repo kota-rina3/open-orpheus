@@ -62,6 +62,25 @@
   </screenshots>
 
   <releases>
+    <release version="0.11.0" date="2026-05-10">
+      <url type="details">https://github.com/YUCLing/open-orpheus/releases/tag/v0.11.0</url>
+      <description>
+        <ul>
+          <li>Added mini player mode.</li>
+          <li xml:lang="zh-CN">新增 mini 播放器模式。</li>
+          <li>Added proxy support.</li>
+          <li xml:lang="zh-CN">新增代理支持。</li>
+          <li>Fixed downloaded track index not handling subdirectories.</li>
+          <li xml:lang="zh-CN">修复已下载曲目索引无法处理子目录的问题。</li>
+          <li>Fixed desktop lyrics not allowing mouse clicks when locked.</li>
+          <li xml:lang="zh-CN">修复桌面歌词锁定后鼠标点击不穿透的问题。</li>
+          <li>Fixed error when exiting while buffering.</li>
+          <li xml:lang="zh-CN">修复缓冲时退出出现错误的问题。</li>
+          <li>Changed Flatpak default download directory.</li>
+          <li xml:lang="zh-CN">更改 Flatpak 默认下载目录。</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.10.4" date="2026-05-04">
       <url type="details">https://github.com/YUCLing/open-orpheus/releases/tag/v0.10.4</url>
       <description>
