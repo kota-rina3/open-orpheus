@@ -11,3 +11,7 @@
 <Button class="mt-4" onclick={() => api.gpu.openInfo()}
   >打开 chrome://gpu</Button
 >
+<p class="mt-2 text-sm text-gray-400">
+  Node.JS {api.versions.node} | Chromium {api.versions.chrome} | Electron {api
+    .versions.electron}
+</p>

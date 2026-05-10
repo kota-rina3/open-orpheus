@@ -5,6 +5,7 @@ export type { CacheGroupStats, AllCacheStats };
 
 export interface ManageContract {
   platform: NodeJS.Platform;
+  versions: NodeJS.ProcessVersions;
 
   checkUpdate(ignoreCache?: boolean): Promise<UpdateInfo | null>;
 
