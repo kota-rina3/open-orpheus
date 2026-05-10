@@ -139,9 +139,11 @@
     onclick={() => api.fireCall("player.onrequestchangetomain", "")}
   >
     {#if togetherStatus.status === "alone"}
-      {#if coverUrl}
-        <img src={coverUrl} alt="Cover" class="size-12.5" />
-      {/if}
+      <img
+        src={coverUrl ?? "gui://skin2/mini/album/default.png"}
+        alt="Cover"
+        class="size-12.5"
+      />
     {:else}
       <div class="flex px-2">
         <div class="size-8 overflow-hidden rounded-full">
