@@ -1,8 +1,22 @@
 import type { WebContents, IpcMainInvokeEvent } from "electron";
 
+// Only keep object branches that contain at least one function at some depth.
+// Pure-data records (e.g. NodeJS.ProcessVersions) are sync values from the
+// preload — they don't need ipc.handle handlers in main.
+type HasFunctionDeep<T> = T extends (...args: never[]) => unknown
+  ? true
+  : T extends Record<string, unknown>
+    ? T extends unknown[]
+      ? false
+      : keyof T extends never
+        ? false
+        : { [K in keyof T]: HasFunctionDeep<T[K]> }[keyof T]
+    : false;
+
 // Extract handler-leaves from a contract: functions become ipc.handle callbacks,
-// nested objects are recursed.  Scalars, arrays, and the "events" subtree are
-// excluded — "events" is always push-from-main (ipcRenderer.on), never handled.
+// nested objects are recursed.  Scalars, arrays, pure-data records, and the
+// "events" subtree are excluded — "events" is always push-from-main
+// (ipcRenderer.on), never handled.
 type DeepIpcHandlers<T> = {
   [K in keyof T as K extends "events"
     ? never
@@ -11,7 +25,9 @@ type DeepIpcHandlers<T> = {
       : T[K] extends Record<string, unknown>
         ? T[K] extends unknown[]
           ? never
-          : K
+          : HasFunctionDeep<T[K]> extends true
+            ? K
+            : never
         : never]: T[K] extends (...args: infer A) => infer R
     ? (event: IpcMainInvokeEvent, ...args: A) => R | Promise<R>
     : T[K] extends Record<string, unknown>
