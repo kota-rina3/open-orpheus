@@ -126,8 +126,45 @@ export function setupRequestInterceptors() {
     }
   );
 
+  session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
+    const url = details.url;
+    // weibo: redirect to https
+    if (url.startsWith("http://music.163.com/back/")) {
+      return callback({ redirectURL: url.replace("http://", "https://") });
+    }
+    // wechat: add self_redirect=true
+    if (url.includes("/qrconnect") && !url.includes("self_redirect=")) {
+      const separator = url.includes("?") ? "&" : "?";
+      return callback({ redirectURL: `${url}${separator}self_redirect=true` });
+    }
+    callback({});
+  });
+
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     details.responseHeaders = details.responseHeaders ?? {};
+
+    // SSO login: add SameSite=None; Secure
+    const host = new URL(details.url).hostname;
+    if (
+      host.endsWith("music.163.com") ||
+      host.endsWith("qq.com") ||
+      host.endsWith("weibo.com")
+    ) {
+      const cookieKey = Object.keys(details.responseHeaders).find(
+        (k) => k.toLowerCase() === "set-cookie"
+      );
+      if (cookieKey && details.responseHeaders[cookieKey]) {
+        details.responseHeaders[cookieKey] = (
+          details.responseHeaders[cookieKey] as string[]
+        ).map((c) => {
+          let patched = c;
+          if (!patched.toLowerCase().includes("samesite"))
+            patched += "; SameSite=None";
+          if (!patched.toLowerCase().includes("secure")) patched += "; Secure";
+          return patched;
+        });
+      }
+    }
 
     // Custom skin
     if (details.url.startsWith("https://music.163.com/api/nos/token/alloc")) {
