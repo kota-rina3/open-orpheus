@@ -277,7 +277,6 @@ async function handleUpload(
       const cloudInfo = JSON.parse(uploadMetaRes.body);
 
       if (cloudInfo.code !== 200) {
-        console.log(cloudInfo);
         throw new Error("Meta upload failed");
       }
 
