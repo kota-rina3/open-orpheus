@@ -47,10 +47,10 @@ registerCallHandler<[], [boolean]>("winhelper.isWindowFullScreen", () => [
 
 registerCallHandler<
   ["minimize" | "maximize" | "restore" | "hide" | "show"],
-  void
+  [boolean]
 >("winhelper.showWindow", (event, show) => {
   const wnd = BrowserWindow.fromWebContents(event.sender);
-  if (!wnd) return;
+  if (!wnd) return [false];
 
   switch (show) {
     case "minimize":
@@ -69,6 +69,8 @@ registerCallHandler<
       wnd.show();
       break;
   }
+
+  return [true];
 });
 
 registerCallHandler<[string], void>(
@@ -407,9 +409,7 @@ registerCallHandler<MenuRequest, void>(
         return;
       }
       if (itemId === "openOrpheus.showMainWindow") {
-        if (!mainWindow) return;
-        mainWindow.show();
-        mainWindow.focus();
+        event.sender.send("channel.call", "trayicon.onclick");
         return;
       }
       event.sender.send("channel.call", "winhelper.onmenuclick", itemId, id);

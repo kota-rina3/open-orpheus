@@ -332,7 +332,6 @@ app.on("before-quit", () => {
 app.on("second-instance", () => {
   const [win] = BrowserWindow.getAllWindows();
   if (win) {
-    if (win.isMinimized()) win.restore();
-    win.focus();
+    win.webContents.send("channel.call", "ipc.onipcmessagerecived", 1, null);
   }
 });
