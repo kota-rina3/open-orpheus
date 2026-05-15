@@ -4,7 +4,11 @@ import type { NetworkFetchRequest } from "./calls/network";
 import { deserialData, encodeAnonymousId } from "./crypto";
 import client from "./request";
 
-const MAX_ANONYMOUS_REGISTER_ATTEMPTS = 10;
+const ANONYMOUS_REGISTER_PATH = "/api/register/anonimous";
+const ANONYMOUS_EAPI_REGISTER_PATH = "/eapi/register/anonimous";
+const MUSIC_ORIGIN = "https://music.163.com";
+const ANONYMOUS_REGISTER_API_URL = `${MUSIC_ORIGIN}${ANONYMOUS_REGISTER_PATH}`;
+const MAX_ANONYMOUS_REGISTER_ATTEMPTS = 15;
 
 function createAnonymousUsername() {
   const id = randomBytes(26).toString("hex").toUpperCase();
@@ -18,7 +22,8 @@ function isAnonymousRegisterRequest(url: string) {
     const parsed = new URL(url);
     return (
       parsed.hostname.endsWith("music.163.com") &&
-      parsed.pathname.endsWith("api/register/anonimous")
+      (parsed.pathname === ANONYMOUS_REGISTER_PATH ||
+        parsed.pathname === ANONYMOUS_EAPI_REGISTER_PATH)
     );
   } catch {
     return false;
@@ -32,6 +37,14 @@ type Response = {
   status: number;
 };
 
+function parseResponseCode(blob: string) {
+  try {
+    return JSON.parse(blob)?.code;
+  } catch {
+    return undefined;
+  }
+}
+
 export default async function interceptAnonymousRequest(
   request: NetworkFetchRequest
 ): Promise<[Response | Error, number, number] | null> {
@@ -40,7 +53,10 @@ export default async function interceptAnonymousRequest(
   let sucCount = 0,
     failCount = 0;
 
-  async function doRequest(request: NetworkFetchRequest): Promise<Response> {
+  async function doRequest(
+    request: NetworkFetchRequest,
+    decrypt = Boolean(request.isDecrypt)
+  ): Promise<Response> {
     const response = await client(request.url, {
       method: request.method,
       headers: {
@@ -55,7 +71,7 @@ export default async function interceptAnonymousRequest(
       hooks: {
         beforeRetry: [
           () => {
-            sucCount++;
+            failCount++;
           },
         ],
       },
@@ -71,7 +87,7 @@ export default async function interceptAnonymousRequest(
     }
 
     const responseBody = Buffer.from(response.rawBody);
-    const blob = request.isDecrypt
+    const blob = decrypt
       ? deserialData(
           responseBody.buffer.slice(
             responseBody.byteOffset,
@@ -80,7 +96,7 @@ export default async function interceptAnonymousRequest(
         )
       : responseBody.toString();
 
-    failCount++;
+    sucCount++;
 
     return {
       blob,
@@ -94,23 +110,37 @@ export default async function interceptAnonymousRequest(
     // Let's do the first request directly
     const res = await doRequest(request);
 
-    const resJson = JSON.parse(res.blob);
-    if (resJson.code === 400) {
+    if (parseResponseCode(res.blob) === 400) {
       // Oops, failed, run the attempts
-      request.url = "https://music.163.com/api/register/anonimous";
+      let lastRes = res;
       for (
         let attempt = 2;
-        attempt < MAX_ANONYMOUS_REGISTER_ATTEMPTS;
+        attempt <= MAX_ANONYMOUS_REGISTER_ATTEMPTS;
         attempt++
       ) {
-        request.body = new URLSearchParams({
-          username: createAnonymousUsername(),
-        }).toString();
-        const res = await doRequest(request);
-        const resJson = JSON.parse(res.blob);
-        if (resJson.code === 400) continue;
+        const res = await doRequest(
+          {
+            ...request,
+            url: ANONYMOUS_REGISTER_API_URL,
+            method: "POST",
+            headers: {
+              Accept: "*/*",
+              "Content-Type": "application/x-www-form-urlencoded",
+              Referer: `${MUSIC_ORIGIN}/`,
+            },
+            body: new URLSearchParams({
+              username: createAnonymousUsername(),
+            }).toString(),
+            retryCount: 0,
+            isDecrypt: false,
+          },
+          false
+        );
+        lastRes = res;
+        if (parseResponseCode(res.blob) === 400) continue;
         return [res, sucCount, failCount];
       }
+      return [lastRes, sucCount, failCount];
     }
 
     return [res, sucCount, failCount];
