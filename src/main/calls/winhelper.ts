@@ -252,7 +252,6 @@ registerCallHandler<[string, WindowDimensions, WindowAttributes], [boolean]>(
       frame: !attributes.spec_window, // is this correct?
       webPreferences: {
         preload: path.join(__dirname, "preload.js"),
-        nodeIntegrationInSubFrames: true,
       },
     });
     wnd.loadURL(url);

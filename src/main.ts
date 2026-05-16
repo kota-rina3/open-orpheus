@@ -93,7 +93,6 @@ const createWindow = () => {
     frame: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
-      nodeIntegrationInSubFrames: true,
     },
   });
 
@@ -160,6 +159,18 @@ const createWindow = () => {
     if (quitting) return;
     mainWindow.webContents.send("channel.call", "winhelper.onclose");
     e.preventDefault();
+  });
+
+  // Some page need window.channel exists but do not really use
+  mainWindow.webContents.on("frame-created", (event, details) => {
+    const frame = details.frame;
+    if (!frame) return;
+    frame.on("dom-ready", () => {
+      if (frame.isDestroyed()) return;
+      const url = new URL(frame.url);
+      if (url.protocol === "https:" || url.hostname.endsWith("music.163.com"))
+        frame.executeJavaScript("window.channel = window.channel ?? {};");
+    });
   });
 };
 
