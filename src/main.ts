@@ -93,6 +93,7 @@ const createWindow = () => {
     frame: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
+      nodeIntegrationInSubFrames: true,
     },
   });
 
