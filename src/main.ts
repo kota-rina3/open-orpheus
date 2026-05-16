@@ -209,6 +209,27 @@ app.on("ready", async () => {
       await packManager.loadWebPack(); // Simply try loading again after download, it will throw if the package is still invalid
     }
 
+    // Some pages need window.channel, but do not really use
+    app.on("web-contents-created", (e, wc) => {
+      if (wc.session !== session.defaultSession) return; // Only enable for default session
+
+      wc.on("frame-created", (event, details) => {
+        const frame = details.frame;
+        if (!frame) return;
+
+        frame.on("dom-ready", () => {
+          if (frame.isDestroyed()) return;
+          const url = new URL(frame.url);
+          // We want only secure, trusted pages
+          if (
+            url.protocol === "https:" ||
+            url.hostname.endsWith("music.163.com")
+          )
+            frame.executeJavaScript("window.channel = window.channel ?? {};");
+        });
+      });
+    });
+
     // Initialize schemes and get registrars
     const [registerOrpheusScheme, registerAudioScheme] = await Promise.all([
       import("./main/orpheus").then((m) => m.default),
