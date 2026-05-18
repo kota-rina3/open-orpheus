@@ -4,8 +4,9 @@ import { app, BrowserWindow, shell } from "electron";
 
 import {
   getLastCreatedWindowId,
-  isWayland,
+  getDesktopEnvironment,
   setInputRegion,
+  DesktopEnvironment,
 } from "@open-orpheus/window";
 
 import AppMenu from "./menu";
@@ -76,7 +77,7 @@ app.on("browser-window-created", (event, wnd) => {
     enableSizeConstraints(wnd);
   });
 
-  if (os.platform() === "linux" && isWayland()) {
+  if (getDesktopEnvironment() === DesktopEnvironment.Wayland) {
     // On Wayland, windows are actually not preserved across show / hide
     wnd.on("show", () => {
       const props = windowProperties.get(wnd.id);
@@ -196,7 +197,7 @@ export function setWindowInputRegion(
       ? regions.map((v) => ({ x: v.x, y: v.y, w: v.width, h: v.height }))
       : null;
   const doSetRegion = () => {
-    if (isWayland()) {
+    if (getDesktopEnvironment() === DesktopEnvironment.Wayland) {
       const props = windowProperties.get(wnd.id);
       if (!props || !props.waylandId) return;
 

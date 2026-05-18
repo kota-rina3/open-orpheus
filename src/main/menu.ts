@@ -3,7 +3,8 @@ import { join, normalize } from "node:path";
 
 import {
   captureNextWindowFirstCursorEnter,
-  isWayland,
+  DesktopEnvironment,
+  getDesktopEnvironment,
 } from "@open-orpheus/window";
 
 import { menuSkin, registerMenuSkinUpdater } from "./menu/skin";
@@ -96,7 +97,7 @@ export default class AppMenu extends EventTarget {
     this.closed = false;
     await this.loadTemplates();
 
-    if (process.platform === "linux" && isWayland()) {
+    if (getDesktopEnvironment() === DesktopEnvironment.Wayland) {
       this.showOverlay();
     } else {
       this.showWindow();
@@ -111,7 +112,7 @@ export default class AppMenu extends EventTarget {
       this.submenuWindow = null;
     }
 
-    if (process.platform === "linux" && isWayland()) {
+    if (getDesktopEnvironment() === DesktopEnvironment.Wayland) {
       destroyOverlayWindow();
     } else {
       destroyMenuWindow();
@@ -126,7 +127,7 @@ export default class AppMenu extends EventTarget {
       patchById(this.items, patch);
     }
 
-    if (process.platform === "linux" && isWayland()) {
+    if (getDesktopEnvironment() === DesktopEnvironment.Wayland) {
       const overlayWindow = getOverlayWindow();
       if (
         overlayWindow &&

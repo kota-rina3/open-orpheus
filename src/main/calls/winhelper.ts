@@ -3,7 +3,11 @@ import path from "node:path";
 import os from "node:os";
 
 import type { AppMenuItem } from "$sharedTypes/menu";
-import { dragWindow, isWayland } from "@open-orpheus/window";
+import {
+  DesktopEnvironment,
+  dragWindow,
+  getDesktopEnvironment,
+} from "@open-orpheus/window";
 
 import { registerCallHandler } from "../calls";
 import { loadFromOrpheusUrl } from "../orpheus";
@@ -25,10 +29,11 @@ import {
 } from "../kv";
 
 function shouldApplyScaleFactor() {
+  const de = getDesktopEnvironment();
   return (
-    os.platform() === "win32" ||
-    os.platform() === "darwin" ||
-    (os.platform() === "linux" && !isWayland())
+    de === DesktopEnvironment.Windows ||
+    de === DesktopEnvironment.Darwin ||
+    de === DesktopEnvironment.X11
   );
 }
 

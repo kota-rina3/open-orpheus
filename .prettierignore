@@ -12,5 +12,6 @@ gui/static/
 .svelte-kit/
 
 # Module dist
-/modules/**/lib/**
 /modules/**/dist/**
+/modules/**/index.js
+/modules/**/index.d.ts
