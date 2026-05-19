@@ -99,12 +99,21 @@ async function buildModules() {
   const modules = await readModuleInfos(modulesDir, moduleNames);
   const layers = computeLayers(modules);
   const preferScript = process.env.PREFER_SCRIPT;
+  const skipIfNoScript = process.env.SKIP_IF_NO_SCRIPT;
 
   for (const layer of layers) {
     await Promise.all(
       layer.map(async (mod) => {
-        const script =
-          preferScript && mod.scripts[preferScript] ? preferScript : "build";
+        const targetScript = preferScript || "build";
+        if (!mod.scripts[targetScript]) {
+          if (skipIfNoScript) {
+            console.log(
+              `Skipping module: ${mod.dirName} (${mod.packageName}) - script "${targetScript}" not found`
+            );
+            return;
+          }
+        }
+        const script = mod.scripts[targetScript] ? targetScript : "build";
         console.log(
           `Building module: ${mod.dirName} (${mod.packageName}) [${script}]`
         );

@@ -30,7 +30,7 @@ jobs:
 
       - name: Build native modules
         shell: bash
-        run: PREFER_SCRIPT=types pnpm build:modules
+        run: SKIP_IF_NO_SCRIPT=1 PREFER_SCRIPT=types pnpm build:modules
 
       - name: Run ESLint
         run: pnpm lint:eslint
