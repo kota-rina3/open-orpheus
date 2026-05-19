@@ -6,7 +6,7 @@ import photon from "@silvia-odwyer/photon-node";
 
 import { mainWindow, setWindowId } from "../window";
 import { dragWindow } from "@open-orpheus/window";
-import { parseLrc } from "../lyrics";
+import { parseLrc } from "../lyrics/parse";
 import { sanitizeRelativePath } from "../util";
 import { storage } from "../folders";
 import { quitting } from "../lifecycle";
