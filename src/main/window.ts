@@ -185,20 +185,19 @@ export interface InputRegion {
 export function setWindowInputRegion(
   wnd: BrowserWindow,
   regions: InputRegion[]
-) {
-  if (os.platform() !== "linux") return;
+): boolean {
+  if (os.platform() !== "linux") return false;
   const inputRegions =
     regions.length > 0
       ? regions.map((v) => ({ x: v.x, y: v.y, w: v.width, h: v.height }))
       : null;
   const doSetRegion = () => {
     if (getDesktopEnvironment() === DesktopEnvironment.Wayland) {
-      setInputRegion(wnd.id.toString(), inputRegions);
+      return setInputRegion(wnd.id.toString(), inputRegions);
     } else {
-      setInputRegion(wnd.getNativeWindowHandle(), inputRegions);
+      return setInputRegion(wnd.getNativeWindowHandle(), inputRegions);
     }
   };
-  doSetRegion();
 
   if (inputRegions) {
     const previousListener = getWindowProp<() => void>(
@@ -212,8 +211,10 @@ export function setWindowInputRegion(
     wnd.addListener("show", doSetRegion);
   } else {
     const listener = getWindowProp<() => void>(wnd, "inputRegionShowListener");
-    if (!listener) return;
+    if (!listener) return false;
     wnd.removeListener("show", listener);
     removeWindowProp(wnd, "inputRegionShowListener");
   }
+
+  return doSetRegion();
 }

@@ -7,9 +7,9 @@ import { getBridge } from "./bridge";
 const api = getBridge<InputRegionContract>("inputRegion");
 const inputRegionElements: Element[] = [];
 
-export function refreshInputRegion() {
+export async function refreshInputRegion() {
   if (api.platform === "linux") {
-    api.setInputRegions(
+    return await api.setInputRegions(
       inputRegionElements.map((v) => {
         const bounding = v.getBoundingClientRect();
         return {
@@ -25,12 +25,11 @@ export function refreshInputRegion() {
     for (const el of inputRegionElements) {
       if (el.matches(":hover")) {
         // Enable input
-        api.setInputRegions([]);
-        return;
+        return await api.setInputRegions([]);
       }
     }
     // Dummy region to disable input
-    api.setInputRegions([{ x: 0, y: 0, width: 1, height: 1 }]);
+    return await api.setInputRegions([{ x: 0, y: 0, width: 1, height: 1 }]);
   }
 }
 
@@ -59,10 +58,11 @@ export const inputRegionAttachment: Attachment = (element) => {
   };
 };
 
-api.events.shown(() => {
+api.events.shown(async () => {
   // Ensure it's set, even if it was populated before window surface is
   // actually shown.
-  refreshInputRegion();
-  // Add a delayed refreshing to make sure again
-  setTimeout(refreshInputRegion, 50);
+  for (let i = 0; i < 5; i++) {
+    if (await refreshInputRegion()) return;
+    await new Promise((r) => setTimeout(r, (i + 1) * 50));
+  }
 });

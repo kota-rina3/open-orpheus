@@ -7,9 +7,9 @@ import { setWindowInputRegion } from "../../main/window";
 export function registerInputRegionHandlers(wnd: Electron.BrowserWindow) {
   registerIpcHandlers<InputRegionContract>(wnd.webContents, "inputRegion", {
     setInputRegions: async (event, regions) => {
-      if (!wnd || wnd.isDestroyed()) return;
+      if (!wnd || wnd.isDestroyed()) return false;
       if (os.platform() === "linux") {
-        setWindowInputRegion(wnd, regions);
+        return setWindowInputRegion(wnd, regions);
       } else {
         // In Windows/macOS, we don't need to be so specific
         if (regions.length > 0) {
@@ -19,6 +19,7 @@ export function registerInputRegionHandlers(wnd: Electron.BrowserWindow) {
         } else {
           wnd.setIgnoreMouseEvents(false);
         }
+        return true;
       }
     },
   });
