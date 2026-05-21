@@ -20,6 +20,9 @@
     MiniPlayerStyle,
     MiniPlayerTogetherStatus,
   } from "$sharedTypes/mini-player";
+  import type { Lyrics, LyricsUpdateEvent } from "$sharedTypes/lyrics";
+  import LyricsSynchronizer, { type RAFEvent } from "$lib/lyrics";
+  import LyricsComponent from "./Lyrics.svelte";
 
   const api = getBridge<MiniPlayerContract>("miniPlayer");
 
@@ -36,6 +39,9 @@
   });
   let style = $state<MiniPlayerStyle | null>(null);
 
+  let lyrics = $state<Lyrics | null>(null);
+  let currentTime = $state(0);
+
   function applyFullState(state: MiniPlayerFullState) {
     playInfo = state.playInfo;
     coverUrl = state.coverUrl;
@@ -47,7 +53,7 @@
     style = state.style;
   }
 
-  onMount(async () => {
+  onMount(() => {
     api.events.playInfoUpdate((info) => {
       playInfo = info;
     });
@@ -78,14 +84,32 @@
     });
     api.events.fullStateUpdate(applyFullState);
 
-    const state = await api.requestFullUpdate();
-    if (state) {
-      applyFullState(state);
-    }
+    api.requestFullUpdate().then((v) => {
+      applyFullState(v);
+    });
+
+    const synchronizer = new LyricsSynchronizer();
+
+    lyrics = synchronizer.lyrics?.regular ?? null;
+
+    synchronizer.addEventListener("lyricsupdate", ((e: LyricsUpdateEvent) => {
+      lyrics = e.detail?.regular ?? null;
+    }) as () => void);
+
+    synchronizer.addEventListener("raf", ((e: RAFEvent) => {
+      currentTime = e.detail.time;
+    }) as () => void);
+
+    synchronizer.setRAFEnabled(true);
+
+    return () => {
+      synchronizer.setRAFEnabled(false);
+    };
   });
 
   let showList = $state(false);
   let showVolumeBar = $state(false);
+  let showSongInfo = $state(false);
   let volume = $state(100);
   //let muted = $state(false);
   let volumeButtonEl: HTMLElement | undefined = $state(undefined);
@@ -175,24 +199,36 @@
       </div>
     {/if}
   </button>
-  <div class="group relative flex flex-1 items-center justify-center gap-2">
-    {#if playInfo}
+  <div
+    class="group relative flex flex-1 items-center justify-center gap-2"
+    onmouseenter={() => (showSongInfo = true)}
+    onmouseleave={() => (showSongInfo = false)}
+  >
+    {#if lyrics || playInfo}
       <div
         class="absolute top-0 right-0 bottom-0 left-0 z-10 flex flex-col justify-center text-center text-sm whitespace-nowrap group-hover:hidden"
         style:background={style?.background}
       >
-        <p
-          class="overflow-hidden text-ellipsis"
-          style:color={style?.titleColor}
-        >
-          {playInfo.songName}
-        </p>
-        <p
-          class="overflow-hidden text-ellipsis"
-          style:color={style?.artistColor}
-        >
-          {playInfo.artistName}
-        </p>
+        {#if lyrics}
+          <LyricsComponent
+            {lyrics}
+            time={currentTime}
+            style="color: {style?.lrcColor ?? 'black'};"
+          />
+        {:else if playInfo}
+          <p
+            class="overflow-hidden text-ellipsis"
+            style:color={style?.titleColor}
+          >
+            {playInfo.songName}
+          </p>
+          <p
+            class="overflow-hidden text-ellipsis"
+            style:color={style?.artistColor}
+          >
+            {playInfo.artistName}
+          </p>
+        {/if}
       </div>
     {/if}
     <IconButton
@@ -274,6 +310,19 @@
     />
   </div>
 </div>
+{#if playInfo}
+  <div class="h-0" class:invisible={!showSongInfo || !lyrics || showList}>
+    <div
+      class="mx-auto w-[98%] overflow-hidden rounded-b-xs py-0.5 text-center text-sm whitespace-nowrap"
+      style:background={style?.list.background}
+      style:color={style?.titleColor}
+    >
+      {playInfo.songName}<span style:color={style?.artistColor}
+        >&nbsp;-&nbsp;{playInfo.artistName}</span
+      >
+    </div>
+  </div>
+{/if}
 <div
   class="playlist invisible h-85 overflow-y-auto"
   style:background={style?.list.background}

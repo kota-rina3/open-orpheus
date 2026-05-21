@@ -24,6 +24,7 @@ import type {
   MiniPlayerStyle,
   MiniPlayerTogetherStatus,
 } from "$sharedTypes/mini-player";
+import { registerLyricsHandlers } from "../../bridge/common/lyrics";
 
 let miniPlayerWindow: BrowserWindow | null = null;
 
@@ -51,6 +52,9 @@ function btn(icon: string, color = "#333333", ext = "svg"): BtnImages {
 
 const defaultStyle: MiniPlayerStyle = {
   background: "#ffffff",
+
+  lrcColor: "#1a1a1a",
+
   titleColor: "#1a1a1a",
   artistColor: "#666666",
 
@@ -197,6 +201,14 @@ packManager.addEventListener("skin2packloaded", async () => {
       labelsFound++;
     }
     if (labelsFound >= 2) break;
+  }
+
+  const slideTexts = skinDoc.getElementsByTagName("SlideText");
+  for (const text of slideTexts) {
+    if (text.getAttribute("name") === "new_lyrc") {
+      style.lrcColor = argbToCss(text.getAttribute("textcolor")!);
+      break;
+    }
   }
 
   const buttons = skinDoc.getElementsByTagName("Button");
@@ -440,6 +452,7 @@ export default function createMiniPlayerWindow() {
     }
   );
   registerInputRegionHandlers(miniPlayerWindow);
+  registerLyricsHandlers(miniPlayerWindow);
 }
 
 export function hideMiniPlayerWindow() {

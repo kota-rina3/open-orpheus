@@ -63,6 +63,8 @@ export interface MiniPlayerFullState {
 export interface MiniPlayerStyle {
   background: string;
 
+  lrcColor: string;
+
   titleColor: string;
   artistColor: string;
 
