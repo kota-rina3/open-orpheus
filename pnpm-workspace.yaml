@@ -11,3 +11,5 @@ patchedDependencies:
   electron-installer-redhat@3.4.0: patches/electron-installer-redhat@3.4.0.patch
 blockExoticSubdeps: false
 nodeLinker: hoisted
+# TODO: Remove after https://github.com/pnpm/pnpm/issues/11801 gets fixed
+minimumReleaseAge: 0
