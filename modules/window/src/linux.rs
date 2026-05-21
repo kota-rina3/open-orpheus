@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::{mem::ManuallyDrop, sync::OnceLock};
 
 use napi::{
     Env, Error, Result, Unknown, ValueType,
@@ -115,20 +115,29 @@ pub fn capture_next_window_first_cursor_enter(
         );
     }
 
-    let cb = callback.build_threadsafe_function().build_callback(
-        |ctx: ThreadsafeCallContext<(u32, u32)>| {
-            Ok(std::convert::Into::<FnArgs<(u32, u32)>>::into(ctx.value))
-        },
-    )?;
+    // Give only one undroppable reference to the callback closure below, to avoid double drop
+    // when FD close (FD close causes the closure to drop its referenced value)
+    let mut callback = Some(ManuallyDrop::new(
+        callback.build_threadsafe_function().build_callback(
+            |ctx: ThreadsafeCallContext<(u32, u32)>| {
+                Ok(std::convert::Into::<FnArgs<(u32, u32)>>::into(ctx.value))
+            },
+        )?,
+    ));
 
     if !wayland::on_next_new_window_first_cursor_enter(move |x, y| {
         if x < 0 || y < 0 {
             return;
         }
+        let Some(cb) = callback.take() else {
+            return;
+        };
         cb.call(
             (x as u32, y as u32),
             ThreadsafeFunctionCallMode::NonBlocking,
         );
+        // Now we can safely drop it only once
+        ManuallyDrop::into_inner(cb);
     }) {
         return env.throw("captureNextWindowFirstCursorEnter is unavailable because Wayland hooks are not initialized");
     }
