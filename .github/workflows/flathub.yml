@@ -46,7 +46,7 @@ jobs:
 
       - name: Install flatpak-node-generator and flatpak-cargo-generator
         run: |
-          COMMIT=ee65dc7a798be56de8c4c1ab73411461cac020b4
+          COMMIT=6f3f08759ac9859492b728f57f5163bf584c47ff
           TOOLS_DIR=/tmp/flatpak-builder-tools
           git clone --filter=blob:none https://github.com/flatpak/flatpak-builder-tools.git "$TOOLS_DIR"
           git -C "$TOOLS_DIR" checkout "$COMMIT"
