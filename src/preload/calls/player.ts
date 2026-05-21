@@ -1,5 +1,7 @@
 import { ipcRenderer } from "electron";
 
+import type { ShowTranslate } from "$sharedTypes/desktop-lyrics";
+
 import { player } from "../audioplayer";
 import type { TextAlignType } from "../Player";
 import { registerCallHandler } from "../calls";
@@ -64,7 +66,7 @@ registerCallHandler<[boolean], [boolean]>(
   }
 );
 
-registerCallHandler<["translate" | "roman"], [boolean]>(
+registerCallHandler<[ShowTranslate], [boolean]>(
   "player.showTranslateLyric",
   (mode) => {
     player.lyricStyle.showTranslate = mode;

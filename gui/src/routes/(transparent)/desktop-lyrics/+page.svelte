@@ -24,8 +24,11 @@
   let currentTime = $state(0);
   let playing = $state(false);
   let locked = $state(false);
-  let unlockButton: HTMLButtonElement | null = $state(null);
-  let rootEl: HTMLDivElement | null = $state(null);
+  let secondaryLyrics = $derived.by(() => {
+    if (lyricStyle.showTranslate === "translate") return translateLyrics;
+    if (lyricStyle.showTranslate === "roman") return romaLyrics;
+    return null;
+  });
 
   const items: ([string, string, string] | [string, string, string, true])[] =
     $derived([
@@ -132,7 +135,6 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-  bind:this={rootEl}
   class={cn(
     "group flex h-screen w-screen items-center justify-evenly overflow-hidden rounded-lg p-2 select-none",
     !locked && "hover:bg-black/40"
@@ -150,7 +152,6 @@
   >
     {#if locked}
       <button
-        bind:this={unlockButton}
         class="size-12 cursor-pointer"
         onclick={() => api.performAction("unlock")}
         title="解锁桌面歌词"
@@ -181,9 +182,7 @@
   </div>
   <Lyrics
     {lyrics}
-    secondaryLyrics={lyricStyle.showTranslate === "translate"
-      ? translateLyrics
-      : romaLyrics}
+    {secondaryLyrics}
     {currentTime}
     {lyricStyle}
     {slogan}

@@ -1,5 +1,7 @@
 export type TextAlignType = "left" | "center" | "right";
 
+export type ShowTranslate = "none" | "translate" | "roman";
+
 export interface LyricStyleConfig {
   fontFamily: string;
   fontSize: number;
@@ -16,5 +18,5 @@ export interface LyricStyleConfig {
   dropShadow: string;
   showProgress: boolean;
   offset: number;
-  showTranslate: "translate" | "roman";
+  showTranslate: ShowTranslate;
 }

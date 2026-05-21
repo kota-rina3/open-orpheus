@@ -1,3 +1,5 @@
+import type { ShowTranslate } from "$sharedTypes/desktop-lyrics";
+
 export enum AudioPlayerState {
   Null = 0,
   Playing = 1,
@@ -46,7 +48,7 @@ export type LyricStyle = {
   // Display
   textAlign: [TextAlignType, TextAlignType];
   lineMode: boolean;
-  showTranslate: "translate" | "roman";
+  showTranslate: ShowTranslate;
   showHorizontal: boolean;
   offset: number;
   // Window
