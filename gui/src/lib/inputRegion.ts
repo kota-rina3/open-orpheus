@@ -6,6 +6,8 @@ import { getBridge } from "./bridge";
 
 const api = getBridge<InputRegionContract>("inputRegion");
 const inputRegionElements: Element[] = [];
+const observer =
+  api.platform === "linux" ? new ResizeObserver(refreshInputRegion) : null;
 
 export async function refreshInputRegion() {
   if (api.platform === "linux") {
@@ -35,7 +37,7 @@ export async function refreshInputRegion() {
 
 export function addInputRegion(el: Element) {
   inputRegionElements.push(el);
-  if (el instanceof HTMLElement) {
+  if (api.platform !== "linux" && el instanceof HTMLElement) {
     el.addEventListener("mouseenter", refreshInputRegion);
     el.addEventListener("mouseleave", refreshInputRegion);
   }
@@ -44,7 +46,7 @@ export function addInputRegion(el: Element) {
 
 export function removeInputRegion(el: Element) {
   inputRegionElements.splice(inputRegionElements.indexOf(el), 1);
-  if (el instanceof HTMLElement) {
+  if (api.platform !== "linux" && el instanceof HTMLElement) {
     el.removeEventListener("mouseenter", refreshInputRegion);
     el.removeEventListener("mouseleave", refreshInputRegion);
   }
@@ -53,8 +55,10 @@ export function removeInputRegion(el: Element) {
 
 export const inputRegionAttachment: Attachment = (element) => {
   addInputRegion(element);
+  observer?.observe(element);
   return () => {
     removeInputRegion(element);
+    observer?.unobserve(element);
   };
 };
 
