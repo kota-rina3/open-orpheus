@@ -1,4 +1,4 @@
-import { LyricLine, LyricsData } from "$sharedTypes/lyrics";
+import type { Lyrics } from "$sharedTypes/lyrics";
 
 /**
  * Parse a timestamp tag like `[mm:ss.xx]` or `[mm:ss:xx]` into milliseconds.
@@ -25,21 +25,13 @@ function parseTimestamp(tag: string): number | null {
 }
 
 /**
- * Parse an LRC string into a {@link LyricsData} structure compatible with the
- * native lyrics rendering component.
+ * Parse an LRC string into {@link Lyrics}.
  *
- * Each `[mm:ss.xx]` line becomes a {@link LyricLine} with a single
+ * Each `[mm:ss.xx]` line becomes a {@link LyricsLine} with a single
  * {@link LyricWord} spanning the entire line (plain LRC has no per-word
  * timing). `end_time` is inferred from the next line's `start_time`.
  */
-export function parseLrc(lrc: string, secondaryLrc?: string): LyricsData {
-  return {
-    lines: parseLrcLines(lrc),
-    secondary_lines: secondaryLrc ? parseLrcLines(secondaryLrc) : undefined,
-  };
-}
-
-function parseLrcLines(lrc: string): LyricLine[] {
+export function parseLrc(lrc: string): Lyrics {
   if (typeof lrc !== "string") return [];
 
   const entries: { time: number; text: string }[] = [];

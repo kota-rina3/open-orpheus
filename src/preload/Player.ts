@@ -49,7 +49,6 @@ export type LyricStyle = {
   showTranslate: "translate" | "roman";
   showHorizontal: boolean;
   offset: number;
-  slogan: string;
   // Window
   desktopTopMost: boolean;
   locked: boolean;
@@ -134,7 +133,6 @@ const DEFAULT_LYRIC_STYLE: LyricStyle = {
   showTranslate: "translate",
   showHorizontal: false,
   offset: 0,
-  slogan: "",
   desktopTopMost: false,
   locked: false,
 };

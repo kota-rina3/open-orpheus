@@ -123,30 +123,6 @@ registerCallHandler<[boolean], [boolean]>("player.setLock", (locked) => {
   return [true];
 });
 
-registerCallHandler<[string], [boolean]>("player.setLRCSlogan", (slogan) => {
-  player.lyricStyle.slogan = slogan;
-  if (slogan) player.lyricContent = null;
-  return [true];
-});
-
-registerCallHandler<
-  [
-    {
-      krc: string;
-      lrc: string;
-      romalrc: string;
-      tlrc: string;
-      yrc: string;
-      // No lyric = empty string
-    },
-  ],
-  [boolean]
->("player.setLyrics", (lyricContent) => {
-  player.lyricContent = lyricContent;
-  if (lyricContent.lrc) player.lyricStyle.slogan = "";
-  return [true];
-});
-
 registerCallHandler<[number], [boolean]>("player.setOffset", (offset) => {
   player.lyricStyle.offset = offset;
   return [true];
