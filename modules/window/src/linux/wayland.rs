@@ -90,6 +90,19 @@ impl WaylandConn {
         }
         self.ifaces.remove(&id);
     }
+
+    fn wl_surface_for_window_object(&self, id: u32, iface: Iface) -> Option<u32> {
+        match iface {
+            Iface::WlSurface => Some(id),
+            Iface::XdgSurface => self.xdg_to_wl.get(&id).copied(),
+            Iface::XdgToplevel => self
+                .top_to_xdg
+                .get(&id)
+                .and_then(|xdg_id| self.xdg_to_wl.get(xdg_id))
+                .copied(),
+            _ => None,
+        }
+    }
 }
 
 // ── Global state ───────────────────────────────────────────────────────────
@@ -492,12 +505,11 @@ fn on_request(fd: RawFd, oid: u32, op: u16, msg: &[u8]) -> bool {
                 }
             }
             (Iface::WlSurface | Iface::XdgSurface | Iface::XdgToplevel, REQ_DESTROY) => {
-                // Clean up CUSTOM_ID_MAP tracking if surface is destroyed
-                if iface == Iface::WlSurface
+                if let Some(wl_surface_id) = conn.wl_surface_for_window_object(oid, iface)
                     && let Some(m) = CUSTOM_ID_MAP.get()
                     && let Ok(mut map) = m.lock()
                 {
-                    map.retain(|_, v| !(v.0 == fd && v.1 == oid));
+                    map.retain(|_, v| !(v.0 == fd && v.1 == wl_surface_id));
                 }
                 conn.purge(oid);
             }
@@ -797,7 +809,10 @@ pub(super) fn set_input_region_rects(window_id: &str, rects: Option<&[super::Rec
         if let Some(r_id) = create_region(fd) {
             region_id = r_id;
             for r in rects {
-                region_add(fd, region_id, r.x, r.y, r.w, r.h);
+                if !region_add(fd, region_id, r.x, r.y, r.w, r.h) {
+                    destroy_injected_region(fd, region_id);
+                    return false;
+                }
             }
         } else {
             return false;
