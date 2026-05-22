@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     mem,
     os::fd::RawFd,
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use libc::{AF_UNIX, c_void, sa_family_t, sockaddr, sockaddr_un};
@@ -24,6 +24,7 @@ enum InjectedType {
 
 struct X11Conn {
     real_fd: RawFd,
+    server_write_lock: Arc<Mutex<()>>,
     tx_state: State,
     rx_state: State,
     tx_buf: Vec<u8>,
@@ -49,6 +50,7 @@ impl X11Conn {
     fn new(real_fd: RawFd) -> Self {
         Self {
             real_fd,
+            server_write_lock: Arc::new(Mutex::new(())),
             tx_state: State::Setup,
             rx_state: State::Setup,
             tx_buf: Vec::new(),
@@ -110,6 +112,29 @@ fn write_u16(b: &mut [u8], v: u16, le: bool) {
 #[inline]
 fn write_u32(b: &mut [u8], v: u32, le: bool) {
     b[0..4].copy_from_slice(&(if le { v.to_le_bytes() } else { v.to_be_bytes() }));
+}
+
+fn record_injected_request(conn: &mut X11Conn, count: u16) {
+    conn.server_seq = conn.server_seq.wrapping_add(count);
+    conn.seq_offset = conn.seq_offset.wrapping_add(count);
+    for i in 0..count {
+        conn.injected_seqs
+            .insert(conn.server_seq.wrapping_sub(i), InjectedType::Other);
+    }
+
+    conn.offset_transitions
+        .push((conn.server_seq.wrapping_add(1), conn.seq_offset));
+    if conn.offset_transitions.len() > 32 {
+        conn.offset_transitions.drain(0..16);
+    }
+    conn.injected_seqs
+        .retain(|&k, _| conn.server_seq.wrapping_sub(k) < 32768);
+}
+
+pub(crate) fn server_write_lock(fd: RawFd) -> Option<Arc<Mutex<()>>> {
+    let m = X11_CONNS.get()?;
+    let map = m.lock().ok()?;
+    map.get(&fd).map(|conn| Arc::clone(&conn.server_write_lock))
 }
 
 fn update_last_active_fd(fd: RawFd) {
@@ -489,6 +514,13 @@ pub(super) fn send_net_wm_moveresize_move(window: u32) -> bool {
         fd
     };
 
+    let Some(write_lock) = server_write_lock(fd) else {
+        return false;
+    };
+    let Ok(_write_guard) = write_lock.lock() else {
+        return false;
+    };
+
     let (real_fd, root, atom, root_x, root_y, button, is_le) = {
         let Some(m) = X11_CONNS.get() else {
             return false;
@@ -507,20 +539,7 @@ pub(super) fn send_net_wm_moveresize_move(window: u32) -> bool {
             return false;
         }
 
-        conn.server_seq = conn.server_seq.wrapping_add(2);
-        conn.seq_offset = conn.seq_offset.wrapping_add(2);
-        conn.injected_seqs
-            .insert(conn.server_seq.wrapping_sub(1), InjectedType::Other);
-        conn.injected_seqs
-            .insert(conn.server_seq, InjectedType::Other);
-
-        conn.offset_transitions
-            .push((conn.server_seq.wrapping_add(1), conn.seq_offset));
-        if conn.offset_transitions.len() > 32 {
-            conn.offset_transitions.drain(0..16);
-        }
-        conn.injected_seqs
-            .retain(|&k, _| conn.server_seq.wrapping_sub(k) < 32768);
+        record_injected_request(conn, 2);
 
         (
             conn.real_fd,
@@ -572,6 +591,13 @@ pub(super) fn set_input_region_rects(window: u32, rects: Option<&[super::Rect]>)
         fd
     };
 
+    let Some(write_lock) = server_write_lock(fd) else {
+        return false;
+    };
+    let Ok(_write_guard) = write_lock.lock() else {
+        return false;
+    };
+
     let (real_fd, shape_opcode, is_le) = {
         let Some(m) = X11_CONNS.get() else {
             return false;
@@ -587,18 +613,7 @@ pub(super) fn set_input_region_rects(window: u32, rects: Option<&[super::Rect]>)
             return false;
         };
 
-        conn.server_seq = conn.server_seq.wrapping_add(1);
-        conn.seq_offset = conn.seq_offset.wrapping_add(1);
-        conn.injected_seqs
-            .insert(conn.server_seq, InjectedType::Other);
-
-        conn.offset_transitions
-            .push((conn.server_seq.wrapping_add(1), conn.seq_offset));
-        if conn.offset_transitions.len() > 32 {
-            conn.offset_transitions.drain(0..16);
-        }
-        conn.injected_seqs
-            .retain(|&k, _| conn.server_seq.wrapping_sub(k) < 32768);
+        record_injected_request(conn, 1);
 
         (conn.real_fd, shape_opcode, conn.is_le)
     };

@@ -103,6 +103,19 @@ fn forward_msg(from: RawFd, to: RawFd, is_event: bool, app_fd: RawFd, proto: Pro
     }
 
     let data = &mut buf[..n as usize];
+    let x11_write_lock = if proto == Protocol::X11 && !is_event {
+        super::x11::server_write_lock(app_fd)
+    } else {
+        None
+    };
+    let x11_write_guard = if let Some(lock) = &x11_write_lock {
+        let Ok(guard) = lock.lock() else {
+            return false;
+        };
+        Some(guard)
+    } else {
+        None
+    };
 
     let cmsg_ptr = msg.msg_control;
     let cmsg_len = msg.msg_controllen;
@@ -225,6 +238,8 @@ fn forward_msg(from: RawFd, to: RawFd, is_event: bool, app_fd: RawFd, proto: Pro
             call_close(fd);
         }
     }
+    drop(x11_write_guard);
+    drop(x11_write_lock);
 
     true
 }

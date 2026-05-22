@@ -718,19 +718,17 @@ pub(crate) fn on_close(fd: RawFd) {
     if let Some(m) = TX_BUFS.get() {
         let _ = m.lock().map(|mut g| g.remove(&fd));
     }
-    if let Some(m) = RX_PENDING_CTRL.get() {
-        if let Ok(mut g) = m.lock()
-            && let Some(pending) = g.remove(&fd)
-        {
-            close_pending_control(pending);
-        }
+    if let Some(m) = RX_PENDING_CTRL.get()
+        && let Ok(mut g) = m.lock()
+        && let Some(pending) = g.remove(&fd)
+    {
+        close_pending_control(pending);
     }
-    if let Some(m) = TX_PENDING_CTRL.get() {
-        if let Ok(mut g) = m.lock()
-            && let Some(pending) = g.remove(&fd)
-        {
-            close_pending_control(pending);
-        }
+    if let Some(m) = TX_PENDING_CTRL.get()
+        && let Ok(mut g) = m.lock()
+        && let Some(pending) = g.remove(&fd)
+    {
+        close_pending_control(pending);
     }
     if let Some(m) = CUSTOM_ID_MAP.get()
         && let Ok(mut map) = m.lock()
