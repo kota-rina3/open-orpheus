@@ -1,4 +1,4 @@
-import type { Lyrics } from "$sharedTypes/lyrics";
+import type { LyricLine, LyricWord, Lyrics } from "$sharedTypes/lyrics";
 
 /**
  * Parse a timestamp tag like `[mm:ss.xx]` or `[mm:ss:xx]` into milliseconds.
@@ -77,4 +77,73 @@ export function parseLrc(lrc: string): Lyrics {
       ],
     };
   });
+}
+
+/**
+ * Parse a YRC (per-character lyrics) string into {@link Lyrics}.
+ *
+ * Format:
+ *   `[line_start_ms, line_duration_ms](char_start_ms, char_duration_ms, flag)字...`
+ *
+ * Each line opens with a `[start, duration]` header (both in milliseconds)
+ * followed by zero or more per-character `(start, duration, flag)` tuples.
+ * The character itself immediately follows the closing parenthesis.
+ * `start_time` on each {@link LyricWord} is stored relative to its line.
+ */
+export function parseYrc(yrc: string): Lyrics {
+  if (typeof yrc !== "string") return [];
+
+  const lines: LyricLine[] = [];
+  const tupleRe = /\((\d+),\s*(\d+),\s*(\d+)\)/g;
+
+  for (const raw of yrc.split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+
+    // ── line header: [start_ms, duration_ms] ──
+    const hdr = line.match(/^\[(\d+),\s*(\d+)\]/);
+    if (!hdr) continue;
+
+    const lineStart = parseInt(hdr[1], 10);
+    const lineDuration = parseInt(hdr[2], 10);
+    if (isNaN(lineStart) || isNaN(lineDuration)) continue;
+
+    // ── per-character tuples ──
+    const words: LyricWord[] = [];
+    tupleRe.lastIndex = hdr[0].length;
+
+    let m: RegExpExecArray | null;
+    while ((m = tupleRe.exec(line)) !== null) {
+      const textStart = m.index + m[0].length;
+      if (textStart >= line.length) break;
+
+      // Collect everything until the next '(' (or end of line) as one word
+      const nextTuple = line.indexOf("(", textStart);
+      const textEnd = nextTuple === -1 ? line.length : nextTuple;
+      const text = line.slice(textStart, textEnd);
+
+      const absStart = parseInt(m[1], 10);
+      const duration = parseInt(m[2], 10);
+
+      words.push({
+        text,
+        start_time: absStart - lineStart,
+        duration,
+      });
+
+      // Advance regex lastIndex past the text we consumed so the next
+      // exec() picks up the following tuple naturally
+      tupleRe.lastIndex = textEnd;
+    }
+
+    if (words.length > 0) {
+      lines.push({
+        start_time: lineStart,
+        end_time: lineStart + lineDuration,
+        words,
+      });
+    }
+  }
+
+  return lines;
 }

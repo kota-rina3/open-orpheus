@@ -5,7 +5,7 @@ import {
 } from "$sharedTypes/mini-player";
 import { registerCallHandler } from "../calls";
 import { lyricsDispatcher } from "../lyrics";
-import { parseLrc } from "../lyrics/parse";
+import { parseLrc, parseYrc } from "../lyrics/parse";
 import {
   updatePlayInfo,
   updateCoverUrl,
@@ -144,7 +144,7 @@ registerCallHandler<
   ],
   [boolean]
 >("player.setLyrics", (event, lyricContent) => {
-  const { lrc, tlrc, romalrc } = lyricContent;
+  const { lrc, yrc, tlrc, romalrc } = lyricContent;
   if (!lrc.trim()) {
     lyricsDispatcher.lyrics = null;
     return [true];
@@ -152,6 +152,9 @@ registerCallHandler<
   const lyrics: LyricsStore = {
     regular: parseLrc(lrc),
   };
+  if (yrc.trim()) {
+    lyrics["per-word"] = parseYrc(yrc);
+  }
   if (tlrc.trim()) {
     lyrics.translate = parseLrc(tlrc);
   }

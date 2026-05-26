@@ -17,13 +17,19 @@
 
   const api = getBridge<DesktopLyricsContract>("desktopLyrics");
 
-  let lyrics: LyricLine[] | null = $state(null);
+  let lrcLyrics: LyricLine[] | null = $state(null);
+  let perwordLyrics: LyricLine[] | null = $state(null);
   let translateLyrics: LyricLine[] | null = $state(null);
   let romaLyrics: LyricLine[] | null = $state(null);
   let slogan: string | null = $state(null);
   let currentTime = $state(0);
   let playing = $state(false);
   let locked = $state(false);
+  let lyrics = $derived.by(() => {
+    if (perwordLyrics) return perwordLyrics;
+    if (lrcLyrics) return lrcLyrics;
+    return null;
+  });
   let secondaryLyrics = $derived.by(() => {
     if (lyricStyle.showTranslate === "translate") return translateLyrics;
     if (lyricStyle.showTranslate === "roman") return romaLyrics;
@@ -88,10 +94,11 @@
 
     const updateLyrics = (store: LyricsStore | null) => {
       if (!store) {
-        lyrics = translateLyrics = romaLyrics = null;
+        lrcLyrics = perwordLyrics = translateLyrics = romaLyrics = null;
         return;
       }
-      lyrics = store.regular;
+      lrcLyrics = store.regular;
+      perwordLyrics = store["per-word"] ?? null;
       translateLyrics = store.translate ?? null;
       romaLyrics = store.roma ?? null;
     };
