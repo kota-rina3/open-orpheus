@@ -174,8 +174,6 @@ const createWindow = () => {
     mainWindow.webContents.send("channel.call", "winhelper.onclose");
     e.preventDefault();
   });
-
-  mainWindow.webContents.openDevTools({ mode: "detach" });
 };
 
 // This method will be called when Electron has finished
