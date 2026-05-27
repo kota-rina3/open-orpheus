@@ -1,43 +1,19 @@
 import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
 import { Readable } from "node:stream";
-import { readFile } from "node:fs/promises";
+import { stat } from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import mime from "mime";
 
 import type { AudioPlayInfo } from "../../preload/Player";
 import client from "../request";
 
+const CHUNK_SIZE = 2 * 1024 * 1024; // 2 MB chunk limit to prevent lock starvation
+
 // #region Interval helpers
 type Interval = [start: number, end: number]; // inclusive [start, end]
-// #endregion
 
-// #region Per-song buffer state
-interface SongBuffer {
-  songId: string;
-  url: string;
-  totalSize: number;
-  buffer: Buffer;
-  intervals: Interval[];
-  backgroundFetchInProgress: boolean;
-  contentType: string;
-}
-
-export default class AudioStreamer extends EventTarget {
-  private songBuffer: SongBuffer | null = null;
-  private currentAudioPlayInfo: AudioPlayInfo | null = null;
-
-  get buffer() {
-    return this.songBuffer;
-  }
-
-  get audioPlayInfo() {
-    return this.currentAudioPlayInfo;
-  }
-
-  constructor() {
-    super();
-  }
-
-  private static mergeInterval(intervals: Interval[], added: Interval): void {
+class IntervalMath {
+  static merge(intervals: Interval[], added: Interval): void {
     intervals.push(added);
     intervals.sort((a, b) => a[0] - b[0]);
     let write = 0;
@@ -54,12 +30,25 @@ export default class AudioStreamer extends EventTarget {
     intervals.length = write;
   }
 
-  /** Return sub-ranges of [start, end] not yet covered by `have`. */
-  private static missingRanges(
-    have: Interval[],
-    start: number,
-    end: number
-  ): Interval[] {
+  static remove(
+    intervals: Interval[],
+    [removeStart, removeEnd]: Interval
+  ): void {
+    const result: Interval[] = [];
+    for (const [s, e] of intervals) {
+      if (e < removeStart || s > removeEnd) {
+        result.push([s, e]); // No overlap
+      } else {
+        // Overlap: carve out the removed portion
+        if (s < removeStart) result.push([s, removeStart - 1]);
+        if (e > removeEnd) result.push([removeEnd + 1, e]);
+      }
+    }
+    intervals.length = 0;
+    intervals.push(...result);
+  }
+
+  static missing(have: Interval[], start: number, end: number): Interval[] {
     const missing: Interval[] = [];
     let cursor = start;
     for (const [s, e] of have) {
@@ -71,8 +60,58 @@ export default class AudioStreamer extends EventTarget {
     return missing;
   }
 
-  private static downloadedBytes(intervals: Interval[]): number {
+  /** Union & Subtract: Requested - (Have + Pending) */
+  static trulyMissing(
+    requested: Interval,
+    have: Interval[],
+    pending: Interval[]
+  ): Interval[] {
+    const missingFromHave = this.missing(have, requested[0], requested[1]);
+    const trulyMissing: Interval[] = [];
+    for (const [mStart, mEnd] of missingFromHave) {
+      trulyMissing.push(...this.missing(pending, mStart, mEnd));
+    }
+    return trulyMissing;
+  }
+
+  static downloadedBytes(intervals: Interval[]): number {
     return intervals.reduce((total, [s, e]) => total + (e - s + 1), 0);
+  }
+}
+// #endregion
+
+// #region Per-song buffer state
+interface SongBuffer {
+  songId: string;
+  url: string;
+  totalSize: number;
+  buffer: Buffer;
+  intervals: Interval[]; // Ranges fully downloaded and written to RAM
+  pendingIntervals: Interval[]; // Lock Array: Ranges currently being fetched by an active HTTP request
+  backgroundFetchInProgress: boolean;
+  contentType: string;
+}
+
+interface ChunkWrittenDetail {
+  start: number;
+  end: number;
+}
+// #endregion
+
+export default class AudioStreamer extends EventTarget {
+  private songBuffer: SongBuffer | null = null;
+  private currentAudioPlayInfo: AudioPlayInfo | null = null;
+
+  get buffer() {
+    return this.songBuffer;
+  }
+
+  get audioPlayInfo() {
+    return this.currentAudioPlayInfo;
+  }
+
+  constructor() {
+    super();
   }
 
   setPlayInfo(playInfo: AudioPlayInfo | null): void {
@@ -119,7 +158,6 @@ export default class AudioStreamer extends EventTarget {
     const rangeValue =
       end !== undefined ? `bytes=${start}-${end}` : `bytes=${start}-`;
 
-    // Cast to native node stream to ensure we have .destroy() and AsyncIterable support
     const stream = client.stream(url, {
       headers: { Range: rangeValue },
       throwHttpErrors: false,
@@ -143,7 +181,7 @@ export default class AudioStreamer extends EventTarget {
         if (match) actualStart = Number(match[1]);
       }
     } else if (response.statusCode === 200) {
-      actualStart = 0; // Server ignored Range header, sent whole file
+      actualStart = 0;
     }
 
     return { stream, headers: response.headers, actualStart };
@@ -163,6 +201,7 @@ export default class AudioStreamer extends EventTarget {
       totalSize,
       buffer: Buffer.alloc(totalSize),
       intervals: [],
+      pendingIntervals: [],
       backgroundFetchInProgress: false,
       contentType,
     };
@@ -170,121 +209,172 @@ export default class AudioStreamer extends EventTarget {
   }
 
   /**
-   * Universal method that downloads chunks, saves them to the song buffer, and
-   * optionally forwards precisely sliced bytes to the client stream controller.
+   * PRODUCER: Fetches a capped chunk from remote, writes to Buffer, updates Locks, and broadcasts events.
    */
-  private async downloadAndCache(
-    sb: SongBuffer,
-    stream: Readable,
-    actualStart: number,
-    clientStream?: {
-      controller: ReadableStreamDefaultController<Uint8Array>;
-      reqStart: number;
-      reqEnd: number;
-    }
-  ): Promise<void> {
-    let offset = actualStart;
-
-    for await (const value of stream) {
-      if (this.songBuffer !== sb) {
-        stream.destroy();
-        throw new Error("Song changed");
-      }
-
-      const chunk = Buffer.isBuffer(value)
-        ? value
-        : Buffer.from(value as Uint8Array | string);
-      if (offset >= sb.totalSize) break;
-
-      const writableLength = Math.min(chunk.length, sb.totalSize - offset);
-      chunk.copy(sb.buffer, offset, 0, writableLength);
-
-      const chunkStart = offset;
-      const chunkEnd = offset + writableLength - 1;
-
-      // Extract and stream ONLY the strict boundaries the client browser requested
-      if (
-        clientStream &&
-        chunkEnd >= clientStream.reqStart &&
-        chunkStart <= clientStream.reqEnd
-      ) {
-        const sliceStart = Math.max(0, clientStream.reqStart - chunkStart);
-        const sliceEnd = Math.min(
-          writableLength,
-          clientStream.reqEnd - chunkStart + 1
-        );
-
-        const toEnqueue = chunk.subarray(sliceStart, sliceEnd);
-        if (toEnqueue.length > 0) {
-          clientStream.controller.enqueue(new Uint8Array(toEnqueue));
-        }
-      }
-
-      if (writableLength > 0) {
-        AudioStreamer.mergeInterval(sb.intervals, [chunkStart, chunkEnd]);
-      }
-
-      offset += writableLength;
-      this.onProgress(
-        AudioStreamer.downloadedBytes(sb.intervals) / sb.totalSize
-      );
-    }
-
-    if (AudioStreamer.downloadedBytes(sb.intervals) >= sb.totalSize) {
-      this.onComplete();
-    }
-  }
-
-  /** Serves a range seamlessly by bridging cached buffer data and live fetched streams */
-  private async streamRange(
+  private async fetchAndCache(
     sb: SongBuffer,
     start: number,
     end: number,
-    controller: ReadableStreamDefaultController<Uint8Array>
+    preOpenedStream?: { stream: Readable; actualStart: number }
   ): Promise<void> {
-    const segments: Array<{ have: boolean; start: number; end: number }> = [];
-    let cursor = start;
+    // 1. Acquire the lock for this specific chunk
+    IntervalMath.merge(sb.pendingIntervals, [start, end]);
 
-    for (const [s, e] of sb.intervals) {
-      if (s > end) break;
-      if (e < cursor) continue;
-      if (s > cursor) {
-        segments.push({
-          have: false,
-          start: cursor,
-          end: Math.min(s - 1, end),
-        });
-      }
-      const covStart = Math.max(s, cursor);
-      const covEnd = Math.min(e, end);
-      if (covStart <= covEnd) {
-        segments.push({ have: true, start: covStart, end: covEnd });
-      }
-      cursor = Math.max(cursor, e + 1);
-      if (cursor > end) break;
-    }
-    if (cursor <= end) segments.push({ have: false, start: cursor, end });
+    try {
+      const { stream, actualStart } =
+        preOpenedStream ?? (await this.openRangeStream(sb.url, start, end));
+      let offset = actualStart;
 
-    for (const seg of segments) {
-      if (this.songBuffer !== sb) throw new Error("Song changed");
+      for await (const value of stream) {
+        if (this.songBuffer !== sb) {
+          stream.destroy();
+          return;
+        }
 
-      if (seg.have) {
-        const copy = new Uint8Array(seg.end - seg.start + 1);
-        sb.buffer.copy(Buffer.from(copy.buffer), 0, seg.start, seg.end + 1);
-        controller.enqueue(copy);
-      } else {
-        const { stream, actualStart } = await this.openRangeStream(
-          sb.url,
-          seg.start,
-          seg.end
+        const chunk = Buffer.isBuffer(value)
+          ? value
+          : Buffer.from(value as Uint8Array);
+        if (offset >= sb.totalSize) break;
+
+        const writableLength = Math.min(chunk.length, sb.totalSize - offset);
+        if (writableLength <= 0) break;
+
+        // Write directly to the persistent RAM cache
+        chunk.copy(sb.buffer, offset, 0, writableLength);
+
+        const chunkStart = offset;
+        const chunkEnd = offset + writableLength - 1;
+
+        // 2. Mark bytes as successfully acquired
+        IntervalMath.merge(sb.intervals, [chunkStart, chunkEnd]);
+        offset += writableLength;
+
+        // 3. Broadcast to sleeping consumers
+        this.dispatchEvent(
+          new CustomEvent<ChunkWrittenDetail>("chunk-written", {
+            detail: { start: chunkStart, end: chunkEnd },
+          })
         );
-        await this.downloadAndCache(sb, stream, actualStart, {
-          controller,
-          reqStart: seg.start,
-          reqEnd: seg.end,
-        });
+
+        this.onProgress(
+          IntervalMath.downloadedBytes(sb.intervals) / sb.totalSize
+        );
+
+        // 4. Chunk Limit Break: Prevent massive locks by stopping the download exactly when the chunk ends.
+        if (offset > end) {
+          stream.destroy();
+          break;
+        }
       }
+
+      if (IntervalMath.downloadedBytes(sb.intervals) >= sb.totalSize) {
+        this.onComplete();
+      }
+    } catch (e) {
+      // Dispatch error so sleeping consumers wake up and retry
+      this.dispatchEvent(new Event("chunk-error"));
+      console.error("Error when downloading the audio chunk:", e);
+    } finally {
+      // 5. Release Lock: Cleanup bounds (written bytes are already safely in sb.intervals)
+      IntervalMath.remove(sb.pendingIntervals, [start, end]);
     }
+  }
+
+  /**
+   * CONSUMER: A Web ReadableStream that perfectly feeds the browser requests.
+   * Reads from RAM, dynamically fetching the next 2MB chunk if missing.
+   */
+  private createConsumerStream(
+    sb: SongBuffer,
+    start: number,
+    end: number
+  ): ReadableStream<Uint8Array> {
+    let cursor = start;
+    const abortController = new AbortController();
+
+    return new ReadableStream<Uint8Array>({
+      start: async (controller) => {
+        try {
+          while (cursor <= end) {
+            if (this.songBuffer !== sb) throw new Error("Song changed");
+
+            // 1. Check if the byte at `cursor` is already available in RAM
+            let availableEnd = -1;
+            for (const [s, e] of sb.intervals) {
+              if (cursor >= s && cursor <= e) {
+                availableEnd = e;
+                break;
+              }
+            }
+
+            if (availableEnd !== -1) {
+              // WE HAVE DATA: Zero-copy slice directly from the internal ArrayBuffer
+              const chunkEnd = Math.min(availableEnd, end);
+              const slice = new Uint8Array(
+                sb.buffer.buffer,
+                sb.buffer.byteOffset + cursor,
+                chunkEnd - cursor + 1
+              );
+              controller.enqueue(slice);
+              cursor = chunkEnd + 1;
+            } else {
+              // MISSING DATA: Ensure a Producer is actively fetching it
+              const isPending = sb.pendingIntervals.some(
+                ([s, e]) => cursor >= s && cursor <= e
+              );
+
+              // Pull Mechanism: If no producer is working on this byte, spawn one for the next chunk
+              if (!isPending) {
+                const trulyMissing = IntervalMath.trulyMissing(
+                  [cursor, end],
+                  sb.intervals,
+                  sb.pendingIntervals
+                );
+                if (trulyMissing.length > 0) {
+                  const [mStart, mEnd] = trulyMissing[0];
+                  const chunkEnd = Math.min(mEnd, mStart + CHUNK_SIZE - 1);
+                  void this.fetchAndCache(sb, mStart, chunkEnd);
+                }
+              }
+
+              // Sleep until a Producer broadcasts a chunk
+              await new Promise<void>((resolve, reject) => {
+                const onWakeup = () => {
+                  cleanup();
+                  resolve();
+                };
+
+                const onAbort = () => {
+                  cleanup();
+                  reject(new Error("Stream cancelled by browser"));
+                };
+
+                const cleanup = () => {
+                  this.removeEventListener("chunk-written", onWakeup);
+                  this.removeEventListener("chunk-error", onWakeup);
+                  abortController.signal.removeEventListener("abort", onAbort);
+                };
+
+                this.addEventListener("chunk-written", onWakeup);
+                this.addEventListener("chunk-error", onWakeup);
+                abortController.signal.addEventListener("abort", onAbort);
+              });
+            }
+          }
+          controller.close();
+        } catch (e) {
+          try {
+            controller.error(e);
+          } catch {
+            /* Browser abruptly closed connection */
+          }
+        }
+      },
+      cancel() {
+        // Triggered immediately when browser aborts a request (e.g., user seeks)
+        abortController.abort();
+      },
+    });
   }
 
   private backgroundFetchFull(sb: SongBuffer): void {
@@ -294,22 +384,21 @@ export default class AudioStreamer extends EventTarget {
     void (async () => {
       try {
         while (this.songBuffer === sb) {
-          const gaps = AudioStreamer.missingRanges(
+          // Look for gaps anywhere in the file that are NOT currently locked
+          const trulyMissing = IntervalMath.trulyMissing(
+            [0, sb.totalSize - 1],
             sb.intervals,
-            0,
-            sb.totalSize - 1
+            sb.pendingIntervals
           );
-          if (gaps.length === 0) break;
+          if (trulyMissing.length === 0) break;
 
-          const { stream, actualStart } = await this.openRangeStream(
-            sb.url,
-            gaps[0][0],
-            gaps[0][1]
-          );
-          await this.downloadAndCache(sb, stream, actualStart);
+          // Aggressively fetch the next missing piece, capped at CHUNK_SIZE
+          const [mStart, mEnd] = trulyMissing[0];
+          const chunkEnd = Math.min(mEnd, mStart + CHUNK_SIZE - 1);
+          await this.fetchAndCache(sb, mStart, chunkEnd);
         }
       } catch {
-        // Suppress background errors. Will gracefully resume later if user seeks.
+        // Suppress background errors. Will gracefully resume later.
       } finally {
         if (this.songBuffer === sb) sb.backgroundFetchInProgress = false;
       }
@@ -327,17 +416,31 @@ export default class AudioStreamer extends EventTarget {
     }
 
     if (this.currentAudioPlayInfo.type !== 4) {
-      // Local file bypass
-      const buf = await readFile(this.currentAudioPlayInfo.path);
+      // Native Node Streaming Fallback for Local Files
+      const fileStat = await stat(this.currentAudioPlayInfo.path);
+      const nodeStream = createReadStream(this.currentAudioPlayInfo.path);
+
+      const webStream = new ReadableStream({
+        start(controller) {
+          nodeStream.on("data", (chunk) => controller.enqueue(chunk));
+          nodeStream.on("end", () => controller.close());
+          nodeStream.on("error", (err) => controller.error(err));
+        },
+        cancel() {
+          nodeStream.destroy();
+        },
+      });
+
       this.onProgress(1);
       this.onComplete();
-      return new Response(buf, {
+
+      return new Response(webStream, {
         status: 200,
         headers: {
           "Content-Type":
             mime.getType(this.currentAudioPlayInfo.path) ||
             "application/octet-stream",
-          "Content-Length": String(buf.length),
+          "Content-Length": String(fileStat.size),
         },
       });
     }
@@ -359,9 +462,9 @@ export default class AudioStreamer extends EventTarget {
     let initialStreamData: { stream: Readable; actualStart: number } | null =
       null;
 
-    // Lazily fetch meta & construct SongBuffer on first connection
     if (!sb || sb.songId !== songId) {
       try {
+        // Fetch metadata to initialize the Buffer
         const { stream, headers, actualStart } = await this.openRangeStream(
           url,
           start,
@@ -378,7 +481,7 @@ export default class AudioStreamer extends EventTarget {
           info.totalSize,
           info.contentType
         );
-        initialStreamData = { stream, actualStart }; // Kept so we don't throw away this response
+        initialStreamData = { stream, actualStart }; // Kept to save a round-trip
       } catch {
         return new Response("Upstream stream initialization error", {
           status: 502,
@@ -395,41 +498,38 @@ export default class AudioStreamer extends EventTarget {
       });
     }
 
-    const stream = new ReadableStream<Uint8Array>({
-      start: async (controller) => {
-        try {
-          if (initialStreamData) {
-            // First ever request optimization: use the already open connection
-            await this.downloadAndCache(
-              sb,
-              initialStreamData.stream,
-              initialStreamData.actualStart,
-              {
-                controller,
-                reqStart: start,
-                reqEnd: resolvedEnd,
-              }
-            );
-          } else {
-            // Standard bridging for pre-existing cache
-            await this.streamRange(sb, start, resolvedEnd, controller);
-          }
-          controller.close();
-        } catch (e) {
-          try {
-            controller.error(e);
-          } catch {
-            /* Browser might have closed early */
-          }
-        } finally {
-          // Fire up background preloading
-          if (rangeHeader && this.songBuffer === sb)
-            this.backgroundFetchFull(sb);
-        }
-      },
-    });
+    // 1. Calculate strictly the bytes we need to fetch from the Network
+    const trulyMissing = IntervalMath.trulyMissing(
+      [start, resolvedEnd],
+      sb.intervals,
+      sb.pendingIntervals
+    );
 
-    return new Response(stream, {
+    // 2. Spawn Network Producers for missing bytes, capped by CHUNK_SIZE
+    for (const [mStart, mEnd] of trulyMissing) {
+      const chunkEnd = Math.min(mEnd, mStart + CHUNK_SIZE - 1);
+
+      if (initialStreamData && mStart === start) {
+        // Reuse the already-open HTTP connection
+        void this.fetchAndCache(sb, mStart, chunkEnd, initialStreamData);
+        initialStreamData = null;
+      } else {
+        void this.fetchAndCache(sb, mStart, chunkEnd);
+      }
+    }
+
+    // 3. Clean up leftover initial stream if it wasn't strictly needed for a missing gap
+    if (initialStreamData) {
+      initialStreamData.stream.destroy();
+    }
+
+    // 4. Fire up background preloading
+    if (rangeHeader) {
+      this.backgroundFetchFull(sb);
+    }
+
+    // 5. Connect the Event-Driven Consumer Web Stream to Response
+    return new Response(this.createConsumerStream(sb, start, resolvedEnd), {
       status: rangeHeader ? 206 : 200,
       headers: {
         "Content-Type": sb.contentType,
@@ -443,5 +543,3 @@ export default class AudioStreamer extends EventTarget {
     });
   }
 }
-
-// #endregion
