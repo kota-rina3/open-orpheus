@@ -15,14 +15,13 @@ import { stringifyError } from "../util";
 
 const audioStreamer = new AudioStreamer();
 
-audioStreamer.addEventListener("progress", ((e: CustomEvent<number>) => {
+audioStreamer.on("progress", (e) => {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send("audio.onProgress", e.detail);
-}) as EventListener);
+  mainWindow.webContents.send("audio.onProgress", e.data.progress);
+});
 
-audioStreamer.addEventListener("complete", () => {
-  const sb = audioStreamer.buffer;
-  const playInfo = audioStreamer.audioPlayInfo;
+audioStreamer.on("complete", (e) => {
+  const { buffer: sb, playInfo } = e.data;
   if (!sb || !playInfo || playInfo.type !== 4) return;
 
   playCacheManager
@@ -38,13 +37,15 @@ audioStreamer.addEventListener("complete", () => {
     });
 });
 
-ipcMain.on("audio.updatePlayInfo", (event, playInfo: AudioPlayInfo | null) => {
-  if (playInfo && playInfo.type === 0) {
-    playInfo.path = normalizePath(playInfo.path);
+ipcMain.handle(
+  "audio.updatePlayInfo",
+  (event, playInfo: AudioPlayInfo | null) => {
+    if (playInfo && playInfo.type === 0) {
+      playInfo.path = normalizePath(playInfo.path);
+    }
+    audioStreamer.setPlayInfo(playInfo);
   }
-  audioStreamer.setPlayInfo(playInfo);
-  event.returnValue = undefined;
-});
+);
 
 export default function registerAudioStreamerScheme(protocol: Protocol) {
   protocol.handle("audio", async (request) => {

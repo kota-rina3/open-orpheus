@@ -2,7 +2,9 @@ import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
 import { Readable } from "node:stream";
 import { stat } from "node:fs/promises";
 import { createReadStream } from "node:fs";
+
 import mime from "mime";
+import Emittery from "emittery";
 
 import type { AudioPlayInfo } from "../../preload/Player";
 import client from "../request";
@@ -98,7 +100,15 @@ interface ChunkWrittenDetail {
 }
 // #endregion
 
-export default class AudioStreamer extends EventTarget {
+export type AudioStreamerEvents = {
+  progress: { playInfo: AudioPlayInfo; buffer: SongBuffer; progress: number };
+  complete: { playInfo: AudioPlayInfo; buffer: SongBuffer };
+
+  chunkwritten: ChunkWrittenDetail;
+  chunkerror: unknown;
+};
+
+export default class AudioStreamer extends Emittery<AudioStreamerEvents> {
   private songBuffer: SongBuffer | null = null;
   private currentAudioPlayInfo: AudioPlayInfo | null = null;
 
@@ -119,14 +129,20 @@ export default class AudioStreamer extends EventTarget {
   }
 
   private onProgress(progress: number): void {
-    this.dispatchEvent(
-      new CustomEvent<number>("progress", { detail: progress })
-    );
+    if (!this.currentAudioPlayInfo || !this.songBuffer) return;
+    this.emit("progress", {
+      playInfo: this.currentAudioPlayInfo,
+      buffer: this.songBuffer,
+      progress,
+    });
   }
 
   private onComplete(): void {
     if (!this.songBuffer || !this.currentAudioPlayInfo) return;
-    this.dispatchEvent(new Event("complete"));
+    this.emit("complete", {
+      playInfo: this.currentAudioPlayInfo,
+      buffer: this.songBuffer,
+    });
   }
 
   private parseSizeFromHeaders(headers: IncomingHttpHeaders): {
@@ -250,11 +266,7 @@ export default class AudioStreamer extends EventTarget {
         offset += writableLength;
 
         // 3. Broadcast to sleeping consumers
-        this.dispatchEvent(
-          new CustomEvent<ChunkWrittenDetail>("chunk-written", {
-            detail: { start: chunkStart, end: chunkEnd },
-          })
-        );
+        this.emit("chunkwritten", { start: chunkStart, end: chunkEnd });
 
         this.onProgress(
           IntervalMath.downloadedBytes(sb.intervals) / sb.totalSize
@@ -272,8 +284,7 @@ export default class AudioStreamer extends EventTarget {
       }
     } catch (e) {
       // Dispatch error so sleeping consumers wake up and retry
-      this.dispatchEvent(new Event("chunk-error"));
-      console.error("Error when downloading the audio chunk:", e);
+      this.emit("chunkerror", e);
     } finally {
       // 5. Release Lock: Cleanup bounds (written bytes are already safely in sb.intervals)
       IntervalMath.remove(sb.pendingIntervals, [start, end]);
@@ -350,13 +361,13 @@ export default class AudioStreamer extends EventTarget {
                 };
 
                 const cleanup = () => {
-                  this.removeEventListener("chunk-written", onWakeup);
-                  this.removeEventListener("chunk-error", onWakeup);
+                  this.off("chunkwritten", onWakeup);
+                  this.off("chunkerror", onWakeup);
                   abortController.signal.removeEventListener("abort", onAbort);
                 };
 
-                this.addEventListener("chunk-written", onWakeup);
-                this.addEventListener("chunk-error", onWakeup);
+                this.on("chunkwritten", onWakeup);
+                this.on("chunkerror", onWakeup);
                 abortController.signal.addEventListener("abort", onAbort);
               });
             }

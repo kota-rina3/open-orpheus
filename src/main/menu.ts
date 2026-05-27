@@ -1,6 +1,8 @@
 import { BrowserWindow, screen } from "electron";
 import { join, normalize } from "node:path";
 
+import Emittery from "emittery";
+
 import {
   captureNextWindowFirstCursorEnter,
   DesktopEnvironment,
@@ -44,7 +46,11 @@ function parseButtonUrls(items: AppMenuItem[]) {
   }
 }
 
-export default class AppMenu extends EventTarget {
+export type AppMenuEvents = {
+  close: undefined;
+};
+
+export default class AppMenu extends Emittery<AppMenuEvents> {
   private onClick: MenuClickHandler | null = null;
   private closed = false;
   private submenuWindow: BrowserWindow | null = null;
@@ -118,7 +124,7 @@ export default class AppMenu extends EventTarget {
     } else {
       destroyMenuWindow();
     }
-    this.dispatchEvent(new Event("close"));
+    this.emit("close");
   }
 
   update(patchItems: AppMenuItem[]) {

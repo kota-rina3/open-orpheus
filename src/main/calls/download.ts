@@ -1,10 +1,5 @@
 import { registerCallHandler } from "../calls";
-import startDownload, {
-  type DownloadTask,
-  type ProgressEvent,
-  type EndEvent,
-  type ErrorEvent,
-} from "../download";
+import startDownload, { type DownloadTask } from "../download";
 import { downloadTemp } from "../folders";
 import { normalizePath } from "../util";
 
@@ -67,33 +62,33 @@ registerCallHandler<[DownloadStartRequest], void>(
       size,
     });
 
-    task.addEventListener("progress", ((e: ProgressEvent) => {
+    task.on("progress", (e) => {
       event.sender.send("channel.call", "download.onprocess", id, {
-        down: e.detail.downloaded,
+        down: e.data.downloaded,
         islast: false,
         path: destPath,
         relative: rel_path,
-        speed: e.detail.speed,
-        total: e.detail.total || size,
+        speed: e.data.speed,
+        total: e.data.total || size,
         type: 0,
       });
-    }) as EventListener);
+    });
 
-    task.addEventListener("end", ((e: EndEvent) => {
+    task.on("end", (e) => {
       event.sender.send("channel.call", "download.onprocess", id, {
-        down: e.detail.downloaded,
+        down: e.data.downloaded,
         islast: true,
         path: destPath,
         relative: rel_path,
-        speed: e.detail.speed,
-        total: e.detail.total || size,
+        speed: e.data.speed,
+        total: e.data.total || size,
         type: 0,
       });
       downloadTasks.delete(id);
-    }) as EventListener);
+    });
 
-    task.addEventListener("error", ((e: ErrorEvent) => {
-      console.error(`Download error for id ${id}:`, e.detail.error);
+    task.on("error", (e) => {
+      console.error(`Download error for id ${id}:`, e.data);
       event.sender.send("channel.call", "download.onprocess", id, {
         down: 0,
         islast: true,
@@ -104,7 +99,7 @@ registerCallHandler<[DownloadStartRequest], void>(
         type: 1,
       });
       downloadTasks.delete(id);
-    }) as EventListener);
+    });
 
     downloadTasks.set(id, task);
   }

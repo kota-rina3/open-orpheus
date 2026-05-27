@@ -90,8 +90,8 @@ const styleKeyMap: Partial<Record<keyof LyricStyle, (value: never) => void>> = {
   locked: (v) => ipcRenderer.invoke("desktopLyrics.setLocked", v),
 };
 
-player.addEventListener("lyricstyleupdate", (e) => {
-  const { key, value } = (e as CustomEvent).detail;
+player.on("lyricstyleupdate", (e) => {
+  const { key, value } = e.data;
   const handler = styleKeyMap[key as keyof LyricStyle];
   if (handler) handler(value as never);
 });

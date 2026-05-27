@@ -1,7 +1,16 @@
+import Emittery from "emittery";
+
 import { LyricsStore } from "$sharedTypes/lyrics";
 
+export type LyricsDispatcherEvents = {
+  lyricsupdate: LyricsStore | null;
+  sloganupdate: string | null;
+  playstateupdate: boolean;
+  timeupdate: number;
+};
+
 // TODO: Lyric track within main process.
-export default class LyricsDispatcher extends EventTarget {
+export default class LyricsDispatcher extends Emittery<LyricsDispatcherEvents> {
   private _lyrics: LyricsStore | null = null;
   private _slogan: string | null = null;
   private _playState = false;
@@ -14,11 +23,7 @@ export default class LyricsDispatcher extends EventTarget {
   set lyrics(value) {
     this._lyrics = value;
     if (value) this.slogan = null;
-    this.dispatchEvent(
-      new CustomEvent("lyricsupdate", {
-        detail: value,
-      })
-    );
+    this.emit("lyricsupdate", value);
   }
 
   get slogan() {
@@ -28,11 +33,7 @@ export default class LyricsDispatcher extends EventTarget {
   set slogan(value) {
     this._slogan = value;
     if (value) this.lyrics = null;
-    this.dispatchEvent(
-      new CustomEvent("sloganupdate", {
-        detail: value,
-      })
-    );
+    this.emit("sloganupdate", value);
   }
 
   get playState() {
@@ -41,11 +42,7 @@ export default class LyricsDispatcher extends EventTarget {
 
   set playState(value) {
     this._playState = value;
-    this.dispatchEvent(
-      new CustomEvent("playstateupdate", {
-        detail: value,
-      })
-    );
+    this.emit("playstateupdate", value);
   }
 
   get time() {
@@ -54,10 +51,6 @@ export default class LyricsDispatcher extends EventTarget {
 
   set time(value) {
     this._time = value;
-    this.dispatchEvent(
-      new CustomEvent("timeupdate", {
-        detail: value,
-      })
-    );
+    this.emit("timeupdate", value);
   }
 }

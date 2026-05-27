@@ -2,18 +2,19 @@
   import { onMount } from "svelte";
   import Lyrics from "$lib/components/Lyrics.svelte";
   import type { LyricStyleConfig } from "$sharedTypes/desktop-lyrics";
-  import type {
-    LyricLine,
-    LyricsSloganUpdateEvent,
-    LyricsStore,
-    LyricsUpdateEvent,
-  } from "$sharedTypes/lyrics";
+  import type { LyricLine, LyricsStore } from "$sharedTypes/lyrics";
   import IconButton from "$lib/components/IconButton.svelte";
   import { cn } from "$lib/utils";
   import { getBridge } from "$lib/bridge";
   import type { DesktopLyricsContract } from "$bridge/contracts/desktop-lyrics-api";
   import { inputRegionAttachment } from "$lib/inputRegion";
-  import LyricsSynchronizer, { type RAFEvent } from "$lib/lyrics";
+  import {
+    lyricsBridgeEmitter,
+    getLyrics,
+    getSlogan,
+    getPlayState,
+    getTime,
+  } from "$lib/lyrics";
 
   const api = getBridge<DesktopLyricsContract>("desktopLyrics");
 
@@ -90,8 +91,6 @@
 
     api.requestFullUpdate();
 
-    const synchronizer = new LyricsSynchronizer();
-
     const updateLyrics = (store: LyricsStore | null) => {
       if (!store) {
         lrcLyrics = perwordLyrics = translateLyrics = romaLyrics = null;
@@ -103,35 +102,24 @@
       romaLyrics = store.roma ?? null;
     };
 
-    updateLyrics(synchronizer.lyrics);
+    updateLyrics(getLyrics());
 
-    slogan = synchronizer.slogan;
-    currentTime = synchronizer.time;
-    playing = synchronizer.playState;
+    slogan = getSlogan();
+    currentTime = getTime();
+    playing = getPlayState();
 
-    // TODO: ESLint says it's undefined
-    type EventListener = () => void;
+    lyricsBridgeEmitter.on("lyricsupdate", (e) => {
+      updateLyrics(e.data);
+    });
 
-    synchronizer.addEventListener("lyricsupdate", ((e: LyricsUpdateEvent) => {
-      updateLyrics(e.detail);
-    }) as EventListener);
+    lyricsBridgeEmitter.on("sloganupdate", (e) => {
+      slogan = e.data;
+    });
 
-    synchronizer.addEventListener("sloganupdate", ((
-      e: LyricsSloganUpdateEvent
-    ) => {
-      slogan = e.detail;
-    }) as EventListener);
-
-    synchronizer.addEventListener("raf", ((e: RAFEvent) => {
-      currentTime = e.detail.time * 1000;
-      playing = e.detail.playState;
-    }) as EventListener);
-
-    synchronizer.setRAFEnabled(true);
-
-    return () => {
-      synchronizer.setRAFEnabled(false);
-    };
+    lyricsBridgeEmitter.on("raf", (e) => {
+      currentTime = e.data.time * 1000;
+      playing = e.data.playState;
+    });
   });
 
   function onDrag() {

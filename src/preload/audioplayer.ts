@@ -30,12 +30,12 @@ function notifyBuffering(isBuffering: boolean) {
   }
 }
 
-player.addEventListener("playinfoupdate", () => {
-  ipcRenderer.sendSync("audio.updatePlayInfo", player.currentPlayInfo);
+player.on("playinfoupdate", async (event) => {
+  await ipcRenderer.invoke("audio.updatePlayInfo", event.data);
 });
 
-player.addEventListener("load", (event) => {
-  const { id } = (event as CustomEvent).detail;
+player.on("load", (event) => {
+  const { id } = event.data;
   bufferProgress = 0;
   fireNativeCall("audioplayer.onLoad", id, {
     activeCode: 0,
@@ -148,18 +148,12 @@ ipcRenderer.on("audio.onProgress", (event, progress) => {
   onPlayProgress();
 });
 
-player.addEventListener("volumechange", () => {
-  fireNativeCall(
-    "audioplayer.onVolume",
-    player.currentId,
-    "",
-    0,
-    player.volume
-  );
+player.on("volumechange", (event) => {
+  fireNativeCall("audioplayer.onVolume", player.currentId, "", 0, event.data);
 });
 
-player.addEventListener("audiodata", (event) => {
-  const { data, pts } = (event as CustomEvent).detail;
+player.on("audiodata", (event) => {
+  const { data, pts } = event.data;
   fireNativeCall("audioplayer.onAudioData", { data, pts });
 });
 

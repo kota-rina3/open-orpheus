@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import type { WriteStream } from "node:fs";
 
 import type { Request } from "got";
+import Emittery from "emittery";
 
 import client from "./request";
 
@@ -14,25 +15,21 @@ export type DownloadStartOptions = {
   size?: number;
 };
 
-export type ProgressEvent = CustomEvent<{
-  percent: number;
-  total?: number;
-  downloaded: number;
-  speed: number; // bytes per second
-}>;
-
-export type EndEvent = CustomEvent<{
+export type DownloadProgress = {
   path: string;
-  total?: number;
+  percent: number;
+  total: number;
   downloaded: number;
-  speed: number; // bytes per second, final speed at the end of the download
-}>;
+  speed: number;
+};
 
-export type ErrorEvent = CustomEvent<{
-  error: Error;
-}>;
+export type DownloadTaskEvents = {
+  progress: DownloadProgress;
+  end: DownloadProgress;
+  error: unknown;
+};
 
-export class DownloadTask extends EventTarget {
+export class DownloadTask extends Emittery<DownloadTaskEvents> {
   private hash: crypto.Hash | null;
   private fsHandle: fs.FileHandle | null = null;
   private request: Request | null = null;
@@ -69,16 +66,13 @@ export class DownloadTask extends EventTarget {
       const instantSpeed = (deltaBytes * 1000) / deltaTime; // bytes/sec
       this.ema = this.ema ? 0.8 * this.ema + 0.2 * instantSpeed : instantSpeed;
 
-      this.dispatchEvent(
-        new CustomEvent("progress", {
-          detail: {
-            percent: prog.percent,
-            total: prog.total || this.options.size,
-            downloaded,
-            speed: this.ema,
-          },
-        })
-      );
+      this.emit("progress", {
+        path: this.path,
+        percent: prog.percent,
+        total: prog.total || this.options.size || 0,
+        downloaded,
+        speed: this.ema,
+      });
 
       this.lastTime = now;
       this.lastBytes = downloaded;
@@ -116,11 +110,7 @@ export class DownloadTask extends EventTarget {
               `MD5 mismatch: expected ${this.options.md5}, got ${calculatedHash}`
             );
             this.errored().catch(() => {}); // Clean up on error
-            this.dispatchEvent(
-              new CustomEvent("error", {
-                detail: new Error("MD5 checksum verification failed"),
-              })
-            );
+            this.emit("error", new Error("MD5 checksum verification failed"));
             return;
           }
         }
@@ -128,35 +118,32 @@ export class DownloadTask extends EventTarget {
         this.writeStream?.end();
         await this.fsHandle?.close().catch(() => {}); // Ensure we attempt to close the file handle
 
-        this.dispatchEvent(
-          new CustomEvent("end", {
-            detail: {
-              path: this.path,
-              total:
-                this.request?.downloadProgress?.total || this.options.size || 0,
-              downloaded: this.request?.downloadProgress?.transferred || 0,
-              speed: this.ema,
-            },
-          })
-        );
+        this.emit("end", {
+          path: this.path,
+          percent: 1,
+          total:
+            this.request?.downloadProgress?.total || this.options.size || 0,
+          downloaded: this.request?.downloadProgress?.transferred || 0,
+          speed: this.ema,
+        });
       });
 
       this.request.on("error", async (error) => {
         console.error("Download error:", error);
         this.errored().catch(() => {}); // Ensure we attempt to clean up on error
-        this.dispatchEvent(new CustomEvent("error", { detail: error }));
+        this.emit("error", error);
       });
       this.writeStream.on("error", async (error) => {
         console.error("Write stream error:", error);
         this.errored().catch(() => {}); // Ensure we attempt to clean up on error
-        this.dispatchEvent(new CustomEvent("error", { detail: error }));
+        this.emit("error", error);
       });
 
       this.request.pipe(this.writeStream);
     } catch (error) {
       console.error("Error download:", error);
       this.errored().catch(() => {}); // Ensure we attempt to clean up on error
-      this.dispatchEvent(new CustomEvent("error", { detail: error }));
+      this.emit("error", error);
     }
   }
 
