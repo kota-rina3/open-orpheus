@@ -15,14 +15,13 @@ import { stringifyError } from "../util";
 
 const audioStreamer = new AudioStreamer();
 
-audioStreamer.addEventListener("progress", ((e: CustomEvent<number>) => {
+audioStreamer.on("progress", (e) => {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send("audio.onProgress", e.detail);
-}) as EventListener);
+  mainWindow.webContents.send("audio.onProgress", e.data.progress);
+});
 
-audioStreamer.addEventListener("complete", () => {
-  const sb = audioStreamer.buffer;
-  const playInfo = audioStreamer.audioPlayInfo;
+audioStreamer.on("complete", (e) => {
+  const { buffer: sb, playInfo } = e.data;
   if (!sb || !playInfo || playInfo.type !== 4) return;
 
   playCacheManager
