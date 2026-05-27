@@ -8,6 +8,7 @@ import { registerCallHandler } from "../calls";
 import { transformLyricStyle } from "../desktopLyrics";
 import { fireNativeCall } from "../channel";
 import type { PlayInfo } from "../../main/calls/player";
+import { imageSize } from "../../util";
 
 let currentMetadata: MediaMetadata | null = null;
 
@@ -21,7 +22,7 @@ registerCallHandler<[PlayInfo], void>("player.setInfo", (playInfo) => {
     artist: playInfo.artistName,
     album: playInfo.albumName,
     artwork: [96, 128, 192, 256, 384, 512].map((size) => ({
-      src: playInfo.url + `?param=${size}y${size}`,
+      src: imageSize(playInfo.url, size),
       sizes: `${size}x${size}`,
       type: "image/jpeg",
     })),
