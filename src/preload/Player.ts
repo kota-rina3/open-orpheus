@@ -1,3 +1,5 @@
+import Emittery from "emittery";
+
 import type { ShowTranslate } from "$sharedTypes/desktop-lyrics";
 
 export enum AudioPlayerState {
@@ -139,7 +141,16 @@ const DEFAULT_LYRIC_STYLE: LyricStyle = {
   locked: false,
 };
 
-export default class Player extends EventTarget {
+export type PlayerEvents = {
+  lyriccontentupdate: LyricContent | null;
+  volumechange: number;
+  audiodata: { data: unknown; pts: unknown }; // TODO: Typings
+  lyricstyleupdate: { key: string | symbol; value: unknown };
+  playinfoupdate: AudioPlayInfo;
+  load: { id: string };
+};
+
+export default class Player extends Emittery<PlayerEvents> {
   private _audioCtx: AudioContext = new AudioContext();
   private _audio = new Audio();
 
@@ -181,9 +192,7 @@ export default class Player extends EventTarget {
 
   set lyricContent(value: LyricContent | null) {
     this._lyricContent = value;
-    this.dispatchEvent(
-      new CustomEvent("lyriccontentupdate", { detail: value })
-    );
+    this.emit("lyriccontentupdate", value);
   }
 
   get audioContext() {
@@ -211,7 +220,7 @@ export default class Player extends EventTarget {
   }
   set volume(value: number) {
     this._gainNode.gain.value = value;
-    this.dispatchEvent(new CustomEvent("volumechange", { detail: value }));
+    this.emit("volumechange", value);
   }
   // #endregion
 
@@ -241,7 +250,7 @@ export default class Player extends EventTarget {
     });
 
     this._pcmTapNode.port.onmessage = (ev) => {
-      this.dispatchEvent(new CustomEvent("audiodata", { detail: ev.data }));
+      this.emit("audiodata", ev.data);
     };
   }
 
@@ -271,11 +280,7 @@ export default class Player extends EventTarget {
         const oldValue = target[prop as keyof LyricStyle];
         (target as Record<string | symbol, unknown>)[prop] = value;
         if (oldValue !== value) {
-          this.dispatchEvent(
-            new CustomEvent("lyricstyleupdate", {
-              detail: { key: prop, value },
-            })
-          );
+          this.emit("lyricstyleupdate", { key: prop, value });
         }
         return true;
       },
@@ -284,13 +289,11 @@ export default class Player extends EventTarget {
 
   async load(playInfo: AudioPlayInfo): Promise<HTMLAudioElement> {
     this._playInfo = playInfo;
-    this.dispatchEvent(new CustomEvent("playinfoupdate"));
+    await this.emit("playinfoupdate", playInfo);
     this._audio.addEventListener(
       "canplay",
       () => {
-        this.dispatchEvent(
-          new CustomEvent("load", { detail: { id: this.currentId } })
-        );
+        this.emit("load", { id: this.currentId });
       },
       { once: true }
     );

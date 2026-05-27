@@ -38,13 +38,15 @@ audioStreamer.addEventListener("complete", () => {
     });
 });
 
-ipcMain.on("audio.updatePlayInfo", (event, playInfo: AudioPlayInfo | null) => {
-  if (playInfo && playInfo.type === 0) {
-    playInfo.path = normalizePath(playInfo.path);
+ipcMain.handle(
+  "audio.updatePlayInfo",
+  (event, playInfo: AudioPlayInfo | null) => {
+    if (playInfo && playInfo.type === 0) {
+      playInfo.path = normalizePath(playInfo.path);
+    }
+    audioStreamer.setPlayInfo(playInfo);
   }
-  audioStreamer.setPlayInfo(playInfo);
-  event.returnValue = undefined;
-});
+);
 
 export default function registerAudioStreamerScheme(protocol: Protocol) {
   protocol.handle("audio", async (request) => {

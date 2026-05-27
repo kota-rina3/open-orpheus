@@ -150,7 +150,7 @@ registerCallHandler<[string, number], [boolean]>("player.setFont", () => {
   return [true];
 });
 
-player.addEventListener("load", () => {
+player.on("load", () => {
   if (!currentMetadata) return;
   // Ensure media session update
   navigator.mediaSession.metadata = currentMetadata;
