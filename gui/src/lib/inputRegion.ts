@@ -25,6 +25,7 @@ export async function refreshInputRegion() {
     );
   } else {
     // On Windows/macOS, `setIgnoreMouseEvent` is used instead of actual setting input regions
+    if (inputRegionElements.length === 0) return await api.setInputRegions([]);
     for (const el of inputRegionElements) {
       if (el.matches(":hover")) {
         // Enable input
@@ -116,6 +117,7 @@ export const inputRegionAttachment: Attachment = (element) => {
 };
 
 api.events.shown(async () => {
+  if (api.platform !== "linux") return;
   // Ensure it's set, even if it was populated before window surface is
   // actually shown.
   for (let i = 0; i < 5; i++) {
