@@ -26,6 +26,7 @@
     "@types/node": "^24.12.3",
     "bits-ui": "^2.18.1",
     "clsx": "^2.1.1",
+    "emittery": "^2.0.0",
     "eslint": "^9.39.4",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-svelte": "^3.17.1",

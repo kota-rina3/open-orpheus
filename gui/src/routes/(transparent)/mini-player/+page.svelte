@@ -20,8 +20,8 @@
     MiniPlayerStyle,
     MiniPlayerTogetherStatus,
   } from "$sharedTypes/mini-player";
-  import type { Lyrics, LyricsUpdateEvent } from "$sharedTypes/lyrics";
-  import LyricsSynchronizer, { type RAFEvent } from "$lib/lyrics";
+  import type { Lyrics } from "$sharedTypes/lyrics";
+  import { lyricsBridgeEmitter, getLyrics } from "$lib/lyrics";
   import LyricsComponent from "./Lyrics.svelte";
 
   const api = getBridge<MiniPlayerContract>("miniPlayer");
@@ -88,17 +88,15 @@
       applyFullState(v);
     });
 
-    const synchronizer = new LyricsSynchronizer();
+    lyrics = getLyrics()?.regular ?? null;
 
-    lyrics = synchronizer.lyrics?.regular ?? null;
+    lyricsBridgeEmitter.on("lyricsupdate", (e) => {
+      lyrics = e.data?.regular ?? null;
+    });
 
-    synchronizer.addEventListener("lyricsupdate", ((e: LyricsUpdateEvent) => {
-      lyrics = e.detail?.regular ?? null;
-    }) as () => void);
-
-    synchronizer.addEventListener("raf", ((e: RAFEvent) => {
-      currentTime = e.detail.time;
-    }) as () => void);
+    lyricsBridgeEmitter.on("raf", (e) => {
+      currentTime = e.data.time;
+    });
   });
 
   let showList = $state(false);

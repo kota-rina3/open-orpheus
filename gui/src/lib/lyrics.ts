@@ -1,28 +1,44 @@
+import Emittery from "emittery";
+
 import type { LyricsContract } from "$bridge/contracts/lyrics-api";
 import type { LyricsStore } from "$sharedTypes/lyrics";
 
 import { getBridge } from "./bridge";
 
-const eventTarget = new EventTarget();
+export type LyricsBridgeEvents = {
+  lyricsupdate: LyricsStore | null;
+  sloganupdate: string | null;
+  playstateupdate: boolean;
+  timeupdate: number;
+  raf: { time: number; playState: boolean };
+};
+
+const emitter = new Emittery<LyricsBridgeEvents>();
+export const lyricsBridgeEmitter = emitter;
+
+emitter.init("raf", () => {
+  setRAFEnabled(true);
+
+  return () => setRAFEnabled(false);
+});
 
 const api = getBridge<LyricsContract>("lyrics");
 
-let lyricStore: LyricsStore | null = null;
+let lyrics: LyricsStore | null = null;
 let slogan: string | null = null;
 let playState = false;
 let time = 0;
 
 let lastTimeUpdate: number | null = null;
+let rafId: number | null = null;
 
 api.events.lyricsStoreUpdate((store) => {
-  lyricStore = store;
-  eventTarget.dispatchEvent(new CustomEvent("lyricsupdate", { detail: store }));
+  lyrics = store;
+  emitter.emit("lyricsupdate", store);
 });
 api.events.sloganUpdate((newSlogan) => {
   slogan = newSlogan;
-  eventTarget.dispatchEvent(
-    new CustomEvent("sloganupdate", { detail: newSlogan })
-  );
+  emitter.emit("sloganupdate", newSlogan);
 });
 api.events.playStateUpdate((state) => {
   playState = state;
@@ -37,110 +53,46 @@ api.events.playStateUpdate((state) => {
     // Clears the lastTimeUpdate to ensure it won't get applied when it restarts
     lastTimeUpdate = null;
   }
-  eventTarget.dispatchEvent(
-    new CustomEvent("playstateupdate", { detail: state })
-  );
+  emitter.emit("playstateupdate", state);
 });
 api.events.timeUpdate((newTime) => {
   lastTimeUpdate = performance.now();
   time = newTime;
-  eventTarget.dispatchEvent(new CustomEvent("timeupdate", { detail: newTime }));
+  emitter.emit("timeupdate", newTime);
 });
 
 api.requestFullUpdate();
 
-export type RAFEvent = CustomEvent<{
-  time: number;
-  playState: boolean;
-}>;
+function onRAF() {
+  rafId = requestAnimationFrame(onRAF);
+  emitter.emit("raf", { time: getTime(), playState });
+}
 
-export default class LyricsSynchronizer extends EventTarget {
-  private static readonly forwardedEvents = [
-    "lyricsupdate",
-    "sloganupdate",
-    "playstateupdate",
-    "timeupdate",
-  ];
-
-  get lyrics() {
-    return lyricStore;
+function setRAFEnabled(enabled: boolean) {
+  if (rafId !== null) {
+    // Stop the previous rAF regardless enabled or not.
+    cancelAnimationFrame(rafId);
+    rafId = null;
   }
+  if (!enabled) return;
+  // Start rAF
+  rafId = requestAnimationFrame(onRAF);
+}
 
-  get slogan() {
-    return slogan;
-  }
+export function getLyrics() {
+  return lyrics;
+}
 
-  get playState() {
-    return playState;
-  }
+export function getSlogan() {
+  return slogan;
+}
 
-  get time() {
-    // When paused, stopped or we don't have last update data,
-    // we simple return the latest time available
-    if (!playState || !lastTimeUpdate) return time;
-    const diff = performance.now() - lastTimeUpdate;
-    return time + diff / 1000;
-  }
+export function getPlayState() {
+  return playState;
+}
 
-  private rafId: number | null = null;
-  private rafListeners = 0;
-
-  constructor() {
-    super();
-
-    this.onRAF = this.onRAF.bind(this);
-  }
-
-  addEventListener(
-    type: string,
-    callback: EventListenerOrEventListenerObject | null,
-    options?: AddEventListenerOptions | boolean
-  ): void {
-    if (LyricsSynchronizer.forwardedEvents.includes(type)) {
-      eventTarget.addEventListener(type, callback, options);
-      return;
-    }
-    super.addEventListener(type, callback, options);
-    if (type === "raf") {
-      this.rafListeners++;
-      this.setRAFEnabled(true);
-    }
-  }
-
-  removeEventListener(
-    type: string,
-    callback: EventListenerOrEventListenerObject | null,
-    options?: EventListenerOptions | boolean
-  ): void {
-    if (LyricsSynchronizer.forwardedEvents.includes(type)) {
-      eventTarget.removeEventListener(type, callback, options);
-      return;
-    }
-    super.removeEventListener(type, callback, options);
-    if (type === "raf") this.rafListeners--;
-    if (this.rafListeners === 0) this.setRAFEnabled(false);
-  }
-
-  private onRAF() {
-    this.rafId = requestAnimationFrame(this.onRAF);
-    this.dispatchEvent(
-      new CustomEvent("raf", {
-        detail: {
-          time: this.time,
-          playState: this.playState,
-        },
-      })
-    );
-  }
-
-  private setRAFEnabled(enabled: boolean) {
-    if (this.rafId !== null) {
-      // Stop the previous rAF regardless enabled or not.
-      cancelAnimationFrame(this.rafId);
-      this.rafId = null;
-    }
-    if (!enabled) return;
-    // Start rAF
-    this.rafId = requestAnimationFrame(this.onRAF);
-  }
+export function getTime() {
+  if (!playState || !lastTimeUpdate) return time;
+  const diff = performance.now() - lastTimeUpdate;
+  return time + diff / 1000;
 }

@@ -16,6 +16,3 @@ export type LyricsType = "regular" | "per-word" | "translate" | "roma";
 export type LyricsStore = { regular: Lyrics } & Partial<
   Record<LyricsType, Lyrics>
 >;
-
-export type LyricsUpdateEvent = CustomEvent<LyricsStore | null>;
-export type LyricsSloganUpdateEvent = CustomEvent<string | null>;
