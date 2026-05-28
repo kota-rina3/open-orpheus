@@ -39,8 +39,6 @@
     return null;
   });
 
-  $inspect(lyrics);
-
   const items: ([string, string, string] | [string, string, string, true])[] =
     $derived([
       ["home", "detail", "打开详情页"],
@@ -55,8 +53,6 @@
     ]);
 
   let lyricStyle = $state<LyricsStyle | null>(null);
-
-  $inspect(lyricStyle);
 
   let previousVertical = false;
   $effect(() => {
