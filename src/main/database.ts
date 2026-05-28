@@ -1,10 +1,11 @@
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import { KeyvSqlite } from "@keyv/sqlite";
 import { Database } from "@open-orpheus/database";
-import { data } from "./folders";
 
-export const NATIVE_KV_TABLE = "kv_store";
+import { data } from "./folders";
+import getKeyvDriver from "./database/KeyvDriver";
 
 const pathToWebDb = join(data, "webdb.dat");
 const pathToMusicLibrary = join(data, "library.dat");
@@ -13,6 +14,7 @@ const pathToNativeDb = join(data, "openorpheus.db");
 let webDb: Database;
 let musicLibraryDb: Database;
 let nativeDb: DatabaseSync;
+let nativeDbKvDriver: KeyvSqlite;
 
 export function initializeDatabases() {
   webDb = new Database(pathToWebDb);
@@ -57,13 +59,8 @@ export function initializeDatabases() {
   });
   nativeDb.exec("PRAGMA journal_mode = WAL;");
   nativeDb.exec("PRAGMA synchronous = FULL;");
-  nativeDb.exec(`
-    CREATE TABLE IF NOT EXISTS ${NATIVE_KV_TABLE} (
-      key        TEXT    PRIMARY KEY,
-      value      BLOB    NOT NULL,
-      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-    )
-  `);
+
+  nativeDbKvDriver = new KeyvSqlite({ driver: getKeyvDriver(nativeDb) });
 }
 
 export function getWebDb() {
@@ -76,4 +73,8 @@ export function getMusicLibraryDb() {
 
 export function getNativeDb() {
   return nativeDb;
+}
+
+export function getNativeDbKvDriver() {
+  return nativeDbKvDriver;
 }

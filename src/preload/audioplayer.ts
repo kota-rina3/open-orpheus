@@ -2,11 +2,9 @@ import { ipcRenderer } from "electron";
 import { fireNativeCall } from "./channel";
 import Player, { AudioPlayerState } from "./Player";
 
-import { get as kvGet } from "../storage";
-
 export const player = new Player();
 
-kvGet("audioplayer.currentAudioOutputDevice").then((deviceId) => {
+ipcRenderer.invoke("audio.getDevice").then((deviceId) => {
   if (deviceId && typeof deviceId === "string") {
     (player.audioContext as unknown as HTMLAudioElement)
       .setSinkId(deviceId)

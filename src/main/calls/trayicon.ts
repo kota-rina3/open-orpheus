@@ -6,12 +6,12 @@ import { pngFromIco } from "../util";
 import { loadFromOrpheusUrl } from "../orpheus";
 import { get, install, setIcon, setMenu, setTooltip, uninstall } from "../tray";
 import { registerCallHandler } from "../calls";
-import { addEventListener as addKVEventListener, KvChangeEvent } from "../kv";
+import * as settings from "../settings";
 import { mainWindow } from "../window";
 
 if (os.platform() === "linux") {
-  addKVEventListener("change", ((event: KvChangeEvent) => {
-    const { key, current: value } = event.detail;
+  settings.events.on("change", (event) => {
+    const { key, value } = event.data;
     if (key === "tray.clickBehavior") {
       if (value === "with-native-menu") {
         const menu = new Menu();
@@ -31,7 +31,7 @@ if (os.platform() === "linux") {
         setMenu(null);
       }
     }
-  }) as EventListener);
+  });
 }
 
 registerCallHandler<[string], void>(

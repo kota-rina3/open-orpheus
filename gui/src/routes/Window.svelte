@@ -2,8 +2,10 @@
   import * as RadioGroup from "$lib/components/ui/radio-group";
   import * as Field from "$lib/components/ui/field";
 
+  import * as settings from "$lib/settings";
+
   let overrideMainWindowSizeLimitPromise = $state(
-    kv.get("window.overrideMainWindowSizeLimit")
+    settings.get("window.overrideMainWindowSizeLimit")
   );
 </script>
 
@@ -16,7 +18,7 @@
     bind:value={
       () => (value as string) || "false",
       (v) => {
-        kv.set("window.overrideMainWindowSizeLimit", v);
+        settings.set("window.overrideMainWindowSizeLimit", v);
         overrideMainWindowSizeLimitPromise = Promise.resolve(v);
       }
     }

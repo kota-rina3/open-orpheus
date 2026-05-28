@@ -24,7 +24,6 @@ import { getWindowSizeStatus } from "./main/util";
 import { data as dataDir, userdata as userdataDir } from "./main/folders";
 import { prepareDeviceId } from "./main/device";
 import { CORE_VERSION } from "./constants";
-import { initializeDatabases } from "./main/database";
 import packManager from "./main/pack";
 import showPackgeDownloadWindow from "./main/windows/package-download";
 import { mainWindow, setMainWindow } from "./main/window";
@@ -98,7 +97,7 @@ if (app.isPackaged)
   // this benefits the startup
   Menu.setApplicationMenu(null);
 
-const createWindow = () => {
+const createWindow = async () => {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
     width: 1280,
@@ -108,6 +107,16 @@ const createWindow = () => {
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
     },
+  });
+
+  const settings = (await import("./main/settings")).kv;
+
+  mainWindow.webContents.ipc.handle("audio.setDevice", async (e, deviceId) => {
+    return settings.set("audio.currentDevice", deviceId);
+  });
+
+  mainWindow.webContents.ipc.handle("audio.getDevice", async () => {
+    return settings.get("audio.currentDevice");
   });
 
   // Load App URL
@@ -269,7 +278,10 @@ app.on("ready", async () => {
     // Register for Open Orpheus session
     registerOrpheusScheme(openOrpheusSession.protocol);
 
-    initializeDatabases();
+    await import("./main/database").then(async (m) => {
+      m.initializeDatabases();
+      await import("./main/settings").then((m) => m.initialize());
+    });
 
     await Promise.all([
       // Initialize util module
@@ -279,8 +291,8 @@ app.on("ready", async () => {
       import("./main/request").then(async (m) => {
         m.setupRequestInterceptors();
 
-        const { kvGet } = await import("./main/kv");
-        const proxy = kvGet("proxy");
+        const { kv: settings } = await import("./main/settings");
+        const proxy = await settings.get("proxy");
         if (typeof proxy !== "string" || !proxy) return;
 
         try {
@@ -318,8 +330,6 @@ app.on("ready", async () => {
           console.warn("Failed to get proxy configuration", err);
         }
       }),
-      // Make sure we handle KV storage IPC calls
-      import("./main/kv"),
       prepareDeviceId(),
       packManager.getPack<WebPack>("web").readPack(),
       import("./main/windows/desktop-lyrics").then((m) => {

@@ -1,9 +1,8 @@
+import { ipcRenderer } from "electron";
 import { player } from "../audioplayer";
 import { registerCallHandler } from "../calls";
 import { fireNativeCall } from "../channel";
 import { AudioPlayInfo } from "../Player";
-
-import * as kv from "../../storage";
 
 registerCallHandler<[string, AudioPlayInfo], void>(
   "audioplayer.load",
@@ -156,7 +155,7 @@ registerCallHandler<[string, { device: AudioDeviceInit; type: string }], void>(
   async (kind, { device }) => {
     if (kind === "device") {
       await Promise.allSettled([
-        kv.set("audioplayer.currentAudioOutputDevice", device.deviceId),
+        ipcRenderer.invoke("audio.setDevice", device.deviceId),
         (player.audioContext as unknown as HTMLAudioElement).setSinkId(
           device.deviceId
         ),

@@ -3,7 +3,7 @@ import os from "node:os";
 import { Menu, nativeImage, NativeImage, Tray } from "electron";
 
 import { mainWindow } from "./window";
-import { kvGet } from "./kv";
+import { kv as settings } from "./settings";
 
 let icon: NativeImage | null = null;
 let tooltip: string | null = null;
@@ -68,7 +68,7 @@ export function install() {
   if (menu) {
     trayIcon.setContextMenu(menu);
   }
-  trayIcon.on("click", () => {
+  trayIcon.on("click", async () => {
     if (!mainWindow) return;
     // Linux can only receives click, so a different behavior is used
     // The `onclick` will be send when main window is invisible, and `onrightclick` will be send when main window is visible
@@ -77,9 +77,9 @@ export function install() {
       // We only send rightclick here if is Linux, the main window is visible, and the user has not set the click behavior to "with-native-menu",
       // or, on Linux, if the user has set the click behavior to "always-show-menu", in which case we always send rightclick to show the menu
       os.platform() !== "linux" ||
-        (kvGet("tray.clickBehavior") !== "always-show-menu" &&
+        ((await settings.get("tray.clickBehavior")) !== "always-show-menu" &&
           !mainWindow.isVisible()) ||
-        kvGet("tray.clickBehavior") === "with-native-menu"
+        (await settings.get("tray.clickBehavior")) === "with-native-menu"
         ? "trayicon.onclick"
         : "trayicon.onrightclick"
     );

@@ -2,6 +2,7 @@
   import * as RadioGroup from "$lib/components/ui/radio-group";
   import * as Field from "$lib/components/ui/field";
   import { getBridge } from "$lib/bridge";
+  import * as settings from "$lib/settings";
   import type { ManageContract } from "$bridge/contracts/manage-api";
 
   const api = getBridge<ManageContract>("manage");
@@ -11,7 +12,7 @@
     | "always-show-menu"
     | "with-native-menu";
 
-  let clickBehaviorPromise = $state(kv.get("tray.clickBehavior"));
+  let clickBehaviorPromise = $state(settings.get("tray.clickBehavior"));
 </script>
 
 <h1 class="text-2xl font-bold">托盘菜单</h1>
@@ -24,7 +25,7 @@
       bind:value={
         () => (value || "depends-on-main-window") as TrayClickBehavior,
         (v) => {
-          kv.set("tray.clickBehavior", v);
+          settings.set("tray.clickBehavior", v);
           clickBehaviorPromise = Promise.resolve(v);
         }
       }

@@ -1,4 +1,5 @@
 import os from "node:os";
+import { stat } from "node:fs/promises";
 
 import {
   app,
@@ -13,8 +14,7 @@ import { registerCallHandler, registerCallbackHandler } from "../calls";
 import { loadFromOrpheusUrl } from "../orpheus";
 import { pngFromIco } from "../util";
 import packManager from "../pack";
-import { stat } from "node:fs/promises";
-import { kvGet, kvSet } from "../kv";
+import { kv as settings } from "../settings";
 import type { ProxyConfiguration, ProxyTypes } from "../request";
 import client, { getProxyAgent } from "../request";
 
@@ -74,11 +74,11 @@ registerCallHandler<[], [] | [StartCommand]>("app.getAppStartCommand", () => {
 
 registerCallHandler<[string, string], [string]>(
   "app.getLocalConfig",
-  (event, item, subItem) => {
+  async (event, item, subItem) => {
     // TODO: Implement this properly
     switch (item) {
       case "Proxy": {
-        const proxyConf = kvGet("proxy");
+        const proxyConf = await settings.get("proxy");
         if (typeof proxyConf !== "string") return [""];
         return [proxyConf];
       }
@@ -96,10 +96,10 @@ registerCallHandler<[string, string], [string]>(
 
 registerCallHandler<[string, string, string], void>(
   "app.setLocalConfig",
-  (event, item, subItem, value) => {
+  async (event, item, subItem, value) => {
     switch (item) {
       case "Proxy":
-        kvSet("proxy", value);
+        await settings.set("proxy", value);
         return;
     }
   }

@@ -15,6 +15,7 @@ import registerAsProtocolClient, {
   isProtocolClient,
   unregisterAsProtocolClient,
 } from "../protocol";
+import { registerSettingsHandlers } from "../../bridge/common/settings";
 
 let manageWndInstance: BrowserWindow | null = null;
 
@@ -158,4 +159,5 @@ export default function showManageWindow() {
       },
     },
   });
+  registerSettingsHandlers(manageWnd);
 }

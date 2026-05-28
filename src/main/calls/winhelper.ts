@@ -22,11 +22,7 @@ import {
 import AppMenu from "../menu";
 import showManageWindow from "../windows/manage";
 import { registerGlobalShortcut, unregisterGlobalShortcut } from "../shortcuts";
-import {
-  addEventListener as addKVEventListener,
-  KvChangeEvent,
-  kvGet,
-} from "../kv";
+import * as settings from "../settings";
 
 function shouldApplyScaleFactor() {
   const de = getDesktopEnvironment();
@@ -153,7 +149,7 @@ type SizeLimit = { x: number; y: number };
 let mainWindowSizeLimits: [SizeLimit, SizeLimit] | null = null;
 registerCallHandler<[{ x: number; y: number }, { x: number; y: number }], void>(
   "winhelper.setWindowSizeLimit",
-  (event, min, max) => {
+  async (event, min, max) => {
     const wnd = BrowserWindow.fromWebContents(event.sender);
     if (!wnd) return;
     const scaleFactor = shouldApplyScaleFactor()
@@ -161,7 +157,7 @@ registerCallHandler<[{ x: number; y: number }, { x: number; y: number }], void>(
       : 1;
     if (
       wnd !== mainWindow ||
-      kvGet("window.overrideMainWindowSizeLimit") !== "true"
+      (await settings.kv.get("window.overrideMainWindowSizeLimit")) !== "true"
     ) {
       // Use window module to set maximum size to avoid issues with maximized/fullscreen windows
       setMinimumSize(wnd, min.x, min.y);
@@ -175,11 +171,11 @@ registerCallHandler<[{ x: number; y: number }, { x: number; y: number }], void>(
     }
   }
 );
-addKVEventListener("change", ((e: KvChangeEvent) => {
+settings.events.on("change", (e) => {
   if (!mainWindow) return;
-  const { key, current } = e.detail;
+  const { key, value } = e.data;
   if (key === "window.overrideMainWindowSizeLimit") {
-    if (current === "true" || !mainWindowSizeLimits) {
+    if (value === "true" || !mainWindowSizeLimits) {
       setMinimumSize(mainWindow, 0, 0);
       setMaximumSize(mainWindow, 0, 0);
     } else {
@@ -195,7 +191,7 @@ addKVEventListener("change", ((e: KvChangeEvent) => {
       );
     }
   }
-}) as EventListener);
+});
 
 registerCallHandler<[], void>("winhelper.bringWindowToTop", (event) => {
   const wnd = BrowserWindow.fromWebContents(event.sender);
@@ -375,7 +371,7 @@ registerCallHandler<MenuRequest, void>(
     const parsedMenuData = parseMenuData(data);
     const injectShowMainWindowMenuItem =
       os.platform() === "linux" &&
-      kvGet("tray.clickBehavior") === "always-show-menu";
+      (await settings.kv.get("tray.clickBehavior")) === "always-show-menu";
     for (let i = 0; i < parsedMenuData.content.length; i++) {
       const item = parsedMenuData.content[i];
       // Inject "Manage Open Orpheus" menu item before "Settings" menu item

@@ -31,6 +31,10 @@ export default defineConfig({
   build: {
     rollupOptions: {
       external: [
+        // Node built-ins
+        "sqlite",
+        // Keyv SQLite driver workarounds
+        "better-sqlite3",
         // Native/WASM Modules
         "7z-wasm",
         "music-tag-native",
