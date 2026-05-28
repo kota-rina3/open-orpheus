@@ -12,6 +12,7 @@ overrides:
   '@keyv/sqlite>sqlite3': '-'
 
 patchedDependencies:
+  '@keyv/sqlite': edf2bf70c67f1d6735ff87fedbe197b5dd0a9fd0e6a454bd7072191ba1b96405
   electron-installer-redhat@3.4.0: 8fe238a56db4de235c10dd7f02c6a523c6ac3010edcc1d547dbc5c6416b89a37
 
 importers:
@@ -75,7 +76,7 @@ importers:
         version: 9.39.4
       '@keyv/sqlite':
         specifier: 6.0.0-alpha.3
-        version: 6.0.0-alpha.3(keyv@6.0.0-alpha.3)
+        version: 6.0.0-alpha.3(patch_hash=edf2bf70c67f1d6735ff87fedbe197b5dd0a9fd0e6a454bd7072191ba1b96405)(keyv@6.0.0-alpha.3)
       '@open-orpheus/lifecycle':
         specifier: workspace:*
         version: link:modules/lifecycle
@@ -6783,7 +6784,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@keyv/sqlite@6.0.0-alpha.3(keyv@6.0.0-alpha.3)':
+  '@keyv/sqlite@6.0.0-alpha.3(patch_hash=edf2bf70c67f1d6735ff87fedbe197b5dd0a9fd0e6a454bd7072191ba1b96405)(keyv@6.0.0-alpha.3)':
     dependencies:
       hookified: 2.2.0
       keyv: 6.0.0-alpha.3

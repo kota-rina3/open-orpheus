@@ -8,6 +8,9 @@ allowBuilds:
   esbuild: true
   unrs-resolver: true
 patchedDependencies:
+  # Patches better-sqlite3 out of package.json, so Electron package won't be confused
+  '@keyv/sqlite': patches/@keyv__sqlite.patch
+  # Fixes compatibility with latest rpmbuild
   electron-installer-redhat@3.4.0: patches/electron-installer-redhat@3.4.0.patch
 blockExoticSubdeps: false
 nodeLinker: hoisted

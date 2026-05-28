@@ -1,0 +1,12 @@
+diff --git a/package.json b/package.json
+index 453fe8d1a51311b7931423f29c87f9cb017cf9f8..ac0b2c38c46b579d35f7a941d5681d179a0ffd4c 100644
+--- a/package.json
++++ b/package.json
+@@ -41,7 +41,6 @@
+   },
+   "homepage": "https://github.com/jaredwray/keyv",
+   "dependencies": {
+-    "better-sqlite3": "^11.0.0",
+     "hookified": "^2.0.0"
+   },
+   "peerDependencies": {
