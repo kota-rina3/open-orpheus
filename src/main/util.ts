@@ -1,4 +1,5 @@
 import { resolve, join, normalize } from "node:path";
+import { stat } from "node:fs/promises";
 import os from "node:os";
 
 import { BrowserWindow, screen } from "electron";
@@ -73,6 +74,26 @@ export function getWindowScaleFactor(wnd: BrowserWindow): number {
 export function isMusicFile(fileOrPath: string): boolean {
   ensureModule(mime);
   return mime.default.getType(fileOrPath)?.startsWith("audio/") || false;
+}
+
+export async function calculateDbSize(db: string): Promise<number> {
+  const dbFile = resolve(db);
+  const walFile = db + "-wal";
+  const shmFile = db + "-shm";
+
+  let sizeBytes = 0;
+
+  await Promise.all([
+    // Cannot fail
+    stat(dbFile).then((v) => (sizeBytes += v.size)),
+    // Failiable
+    Promise.allSettled([
+      stat(walFile).then((v) => (sizeBytes += v.size)),
+      stat(shmFile).then((v) => (sizeBytes += v.size)),
+    ]),
+  ]);
+
+  return sizeBytes;
 }
 
 export default async function initialize() {

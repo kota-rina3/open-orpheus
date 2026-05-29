@@ -58,6 +58,9 @@
         <p class="mt-1 text-sm text-gray-600">{stats.http.entryCount} 个条目</p>
       {/if}
       <p class="text-sm text-gray-600">{formatBytes(stats.http.sizeBytes)}</p>
+      <p class="text-sm text-gray-600">
+        实际占用 {formatBytes(stats.http.sizeBytesOnDisk!)}
+      </p>
       <Button
         class="mt-3"
         variant="outline"

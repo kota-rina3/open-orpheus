@@ -5,7 +5,7 @@ import { readdir, stat, rm } from "node:fs/promises";
 import { app, BrowserWindow, Menu } from "electron";
 import packManager from "../pack";
 import WebPack from "../packs/WebPack";
-import { cache as cacheDir, wasm as wasmDir } from "../folders";
+import { wasm as wasmDir } from "../folders";
 import {
   httpCacheStorage,
   lyricCacheManager,
@@ -70,34 +70,13 @@ export default function showManageWindow() {
         const [playCacheInfo, httpStats, lyrics, wasm] = await Promise.all([
           playCacheManager?.getInfo(),
           (async () => {
-            let entryCount = -1;
-            let sizeBytes = 0;
-
-            const dbFile = resolve(cacheDir, "http.db");
-            const walFile = resolve(cacheDir, "http.db-wal");
-            const shmFile = resolve(cacheDir, "http.db-shm");
-
-            const promises: Promise<unknown>[] = [
-              stat(dbFile).then((v) => (sizeBytes += v.size)),
-              stat(walFile).then((v) => (sizeBytes += v.size)),
-              stat(shmFile).then((v) => (sizeBytes += v.size)),
-            ];
-
-            const iter = httpCacheStorage?.iterator?.(undefined);
-            if (iter) {
-              entryCount = 0;
-              promises.push(
-                (async () => {
-                  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                  for await (const v of iter) {
-                    entryCount++;
-                  }
-                })()
-              );
-            }
-
-            await Promise.allSettled(promises);
-            return { entryCount, sizeBytes };
+            if (!httpCacheStorage) return undefined;
+            const [entryCount, sizeBytes, sizeBytesOnDisk] = await Promise.all([
+              httpCacheStorage.entryCount(),
+              httpCacheStorage.totalSize(),
+              httpCacheStorage.diskSize(),
+            ]);
+            return { entryCount, sizeBytes, sizeBytesOnDisk };
           })(),
           lyricCacheManager?.getStats(),
           (async () => {
