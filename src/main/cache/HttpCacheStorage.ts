@@ -20,7 +20,9 @@ export default class HttpCacheStorage extends Keyv {
       // 2 days
       if (now - lastVacuum <= 48 * 60 * 60 * 1000) return;
       await this.vacuum();
-    })();
+    })().catch((e) => {
+      console.error("Failed to run auto vaccum:", e);
+    });
   }
 
   async vacuum() {
@@ -41,17 +43,13 @@ FROM pragma_page_count(), pragma_freelist_count(), pragma_page_size();`);
   }
 
   async entryCount() {
-    let entryCount = -1;
-
-    const iter = this.iterator?.(undefined);
-    if (iter) {
-      entryCount = 0;
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      for await (const v of iter) {
-        entryCount++;
-      }
+    try {
+      const result = await this.driver.query(
+        `SELECT COUNT(*) AS count FROM ${this.driver.table};`
+      );
+      return (result[0] as { count: number }).count;
+    } catch {
+      return -1;
     }
-
-    return entryCount;
   }
 }
