@@ -85,6 +85,7 @@ export default function showManageWindow() {
 
             const iter = httpCacheStorage?.iterator?.(undefined);
             if (iter) {
+              entryCount = 0;
               promises.push(
                 (async () => {
                   // eslint-disable-next-line @typescript-eslint/no-unused-vars
