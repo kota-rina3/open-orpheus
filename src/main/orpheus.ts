@@ -31,7 +31,7 @@ class LoadError extends Error {
 
 async function loadFromFilePath(
   path: string
-): Promise<{ content: Buffer<ArrayBuffer>; contentType: string }> {
+): Promise<{ content: Uint8Array; contentType: string }> {
   try {
     const fileContent = await packManager
       .getPack<WebPack>("web")
@@ -44,12 +44,12 @@ async function loadFromFilePath(
   }
 }
 
-function getMd5(content: Buffer<ArrayBuffer>): string {
+function getMd5(content: Uint8Array): string {
   return createHash("md5").update(content).digest("hex");
 }
 
 export async function loadFromOrpheusUrl(url: string): Promise<{
-  content: Buffer<ArrayBuffer>;
+  content: Uint8Array;
   contentType: string;
   cacheable?: boolean;
 }> {
@@ -263,9 +263,8 @@ export async function loadFromOrpheusUrl(url: string): Promise<{
       }
       const contentType =
         response.headers["content-type"] || "application/octet-stream";
-      const body = Buffer.from(response.rawBody);
       return {
-        content: body as Buffer<ArrayBuffer>,
+        content: response.rawBody,
         contentType,
       };
     }
@@ -286,7 +285,7 @@ export default function registerOrpheusScheme(protocol: Protocol) {
       if (!cacheable) {
         headers["Cache-Control"] = "no-store";
       }
-      return new Response(content, {
+      return new Response(content as BodyInit, {
         headers,
       });
     } catch (error) {
