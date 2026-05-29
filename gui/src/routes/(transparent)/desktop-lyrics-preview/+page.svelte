@@ -2,7 +2,7 @@
   import { onMount, tick } from "svelte";
   import Lyrics from "$lib/components/Lyrics.svelte";
   import type { LyricLine } from "$sharedTypes/lyrics";
-  import type { LyricsStyle } from "$sharedTypes/desktop-lyrics";
+  import { LineMode, type LyricsStyle } from "$sharedTypes/desktop-lyrics";
   import { getBridge } from "$lib/bridge";
   import type { DesktopLyricsPreviewContract } from "$bridge/contracts/desktop-lyrics-api";
 
@@ -35,7 +35,9 @@
 
   // Double-line: line 0 fully played (time=10000), line 1 unplayed
   // Single-line: line 0 half played (time=5000)
-  let currentTime = $derived(lyricStyle?.lineMode ? 5000 : 10000);
+  let currentTime = $derived(
+    lyricStyle?.lineMode === LineMode.Single ? 5000 : 10000
+  );
 
   let lyricsEl: HTMLDivElement | undefined = $state();
   let scale = $state(1);
