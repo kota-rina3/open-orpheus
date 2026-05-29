@@ -5,9 +5,8 @@ import type {
   NetworkFetchRequest,
   NetworkFetchResponse,
 } from "../main/calls/network";
-import { fireNativeCall } from "./channel";
 
-export default class YunxinIM {
+export default class YunxinIM extends EventTarget {
   static APP_KEY = "3a6a3e48f6854dfa4e4464f3bdaec3b4";
 
   private nimInst: SDK.NIM | null = null;
@@ -152,11 +151,11 @@ export default class YunxinIM {
             data.duration
           );
         },
-        onmsgs(msgs) {
+        onmsgs: (msgs) => {
           for (const msg of msgs) {
-            const eventMsg = msg.content;
-            // TODO: We might want to decouple this later
-            fireNativeCall("im.onChatRoomMsg", { msg: eventMsg });
+            this.dispatchEvent(
+              new CustomEvent("chatroommsg", { detail: msg.content })
+            );
           }
         },
       });
