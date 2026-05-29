@@ -1,0 +1,28 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 9c4a059012663dff884e5d26876c692e072b36f3..025f166152402ecc0ff3c3448f5af717435ca733 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -78,6 +78,9 @@ var EventManager = class {
+       this.off(event, onceListener);
+     };
+     this.on(event, onceListener);
++    return () => {
++      this.off(event, onceListener);
++    };
+   }
+   // Emit an event
+   // biome-ignore lint/suspicious/noExplicitAny: type format
+diff --git a/dist/index.js b/dist/index.js
+index 0b8687711548a42cdc3c0fcb11ca2696eb4e1aed..7cf0067a1b6aca6060c987b448f1435fb76e66d5 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -48,6 +48,9 @@ var EventManager = class {
+       this.off(event, onceListener);
+     };
+     this.on(event, onceListener);
++    return () => {
++      this.off(event, onceListener);
++    };
+   }
+   // Emit an event
+   // biome-ignore lint/suspicious/noExplicitAny: type format

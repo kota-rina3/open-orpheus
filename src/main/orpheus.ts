@@ -243,30 +243,30 @@ export async function loadFromOrpheusUrl(url: string): Promise<{
       }
       return await loadFromFilePath(parsedUrl.pathname);
     case "cache": {
-      const urlCacheManager = (await import("./cache")).urlCacheManager;
+      const cacheStorage = (await import("./cache")).httpCacheStorage;
       const url = parsedUrl.search.substring(1); // remove leading '?'
       if (!url) {
         throw new LoadError("Bad Request: Missing URL parameter", 400);
       }
-      if (!urlCacheManager) {
-        throw new LoadError("URL cache manager is unavailable", 500);
+      if (!cacheStorage) {
+        throw new LoadError("URL cache storage is unavailable", 500);
       }
-      const cached = await urlCacheManager.getOrFetch(url, async () => {
-        const response = await client(url, { throwHttpErrors: false });
-        if (response.statusCode < 200 || response.statusCode >= 300) {
-          throw new LoadError(
-            `Failed to fetch resource: ${response.statusMessage}`,
-            response.statusCode
-          );
-        }
-        const contentType =
-          response.headers["content-type"] || "application/octet-stream";
-        const body = Buffer.from(response.rawBody);
-        return { contentType, body };
+      const response = await client(url, {
+        throwHttpErrors: false,
+        cache: cacheStorage,
       });
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw new LoadError(
+          `Failed to fetch resource: ${response.statusMessage}`,
+          response.statusCode
+        );
+      }
+      const contentType =
+        response.headers["content-type"] || "application/octet-stream";
+      const body = Buffer.from(response.rawBody);
       return {
-        content: Buffer.from(cached.body) as Buffer<ArrayBuffer>,
-        contentType: cached.contentType,
+        content: body as Buffer<ArrayBuffer>,
+        contentType,
       };
     }
     default:

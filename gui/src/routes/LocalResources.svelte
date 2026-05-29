@@ -54,7 +54,9 @@
     </div>
     <div class="rounded-lg border p-4">
       <h2 class="font-semibold">HTTP（图片）缓存</h2>
-      <p class="mt-1 text-sm text-gray-600">{stats.http.entryCount} 个条目</p>
+      {#if stats.http.entryCount !== -1}
+        <p class="mt-1 text-sm text-gray-600">{stats.http.entryCount} 个条目</p>
+      {/if}
       <p class="text-sm text-gray-600">{formatBytes(stats.http.sizeBytes)}</p>
       <Button
         class="mt-3"

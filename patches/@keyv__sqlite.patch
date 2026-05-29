@@ -1,3 +1,51 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index ad8c06db70ff05a52ae33f80ef9a1269be38dd2a..674f654b8dd050b67c9020f3fdb9e009f49db8d9 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -113,7 +113,7 @@ __export(node_sqlite_driver_exports, {
+   nodeSqliteDriver: () => nodeSqliteDriver
+ });
+ async function createNodeSqliteConnection(options) {
+-  const { DatabaseSync } = await import("sqlite");
++  const { DatabaseSync } = await import("node:sqlite");
+   const db = new DatabaseSync(options.filename);
+   if (options.busyTimeout) {
+     db.exec(`PRAGMA busy_timeout = ${Number(options.busyTimeout)}`);
+@@ -205,7 +205,7 @@ async function loadDriver(name) {
+       return betterSqlite3Driver2;
+     }
+     case "node:sqlite": {
+-      await import("sqlite");
++      await import("node:sqlite");
+       const { nodeSqliteDriver: nodeSqliteDriver2 } = await Promise.resolve().then(() => (init_node_sqlite_driver(), node_sqlite_driver_exports));
+       return nodeSqliteDriver2;
+     }
+diff --git a/dist/index.js b/dist/index.js
+index 30b8214e1c4ae437db1093b892cfd9ddcd356d36..d4fbe7afe4ab8c5392d6f18197a4e58a581e26d4 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -16,7 +16,7 @@ async function loadDriver(name) {
+       return betterSqlite3Driver;
+     }
+     case "node:sqlite": {
+-      await import("sqlite");
++      await import("node:sqlite");
+       const { nodeSqliteDriver } = await import("./node-sqlite-driver-VQKIIBYS.js");
+       return nodeSqliteDriver;
+     }
+diff --git a/dist/node-sqlite-driver-VQKIIBYS.js b/dist/node-sqlite-driver-VQKIIBYS.js
+index 025176a597b33c3dc23356744d13f323f1593698..ff1e21ee05e85b6bd16b67abe3907e83931086a5 100644
+--- a/dist/node-sqlite-driver-VQKIIBYS.js
++++ b/dist/node-sqlite-driver-VQKIIBYS.js
+@@ -5,7 +5,7 @@ import {
+ 
+ // src/drivers/node-sqlite-driver.ts
+ async function createNodeSqliteConnection(options) {
+-  const { DatabaseSync } = await import("sqlite");
++  const { DatabaseSync } = await import("node:sqlite");
+   const db = new DatabaseSync(options.filename);
+   if (options.busyTimeout) {
+     db.exec(`PRAGMA busy_timeout = ${Number(options.busyTimeout)}`);
 diff --git a/package.json b/package.json
 index 453fe8d1a51311b7931423f29c87f9cb017cf9f8..ac0b2c38c46b579d35f7a941d5681d179a0ffd4c 100644
 --- a/package.json

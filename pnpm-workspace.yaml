@@ -10,8 +10,12 @@ allowBuilds:
 patchedDependencies:
   # Patches better-sqlite3 out of package.json, so Electron package won't be confused
   "@keyv/sqlite": patches/@keyv__sqlite.patch
+  # Fixes event listener leak
+  cacheable-request@13.0.19: patches/cacheable-request@13.0.19.patch
   # Fixes compatibility with latest rpmbuild
   electron-installer-redhat@3.4.0: patches/electron-installer-redhat@3.4.0.patch
+  # Fixes event listener leak (comes with cacheable-request fix before)
+  keyv@6.0.0-alpha.3: patches/keyv@6.0.0-alpha.3.patch
 blockExoticSubdeps: false
 nodeLinker: hoisted
 # See https://github.com/electron/electron/issues/51619

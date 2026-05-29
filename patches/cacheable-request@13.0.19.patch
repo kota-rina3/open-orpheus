@@ -1,0 +1,20 @@
+diff --git a/dist/index.js b/dist/index.js
+index db2edca1d68379d80da1195f1d6c4df566df7b67..ec8c777c1c2944b008fa6b5b7111589d70561be3 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -246,12 +246,12 @@ class CacheableRequest {
+                 const errorHandler = (error) => ee.emit("error", new CacheError(error));
+                 if (this.cache instanceof Keyv) {
+                     const cachek = this.cache;
+-                    cachek.once("error", errorHandler);
++                    const unlistener = cachek.once("error", errorHandler);
+                     ee.on("error", () => {
+-                        cachek.removeListener("error", errorHandler);
++                        unlistener();
+                     });
+                     ee.on("response", () => {
+-                        cachek.removeListener("error", errorHandler);
++                        unlistener();
+                     });
+                 }
+                 try {

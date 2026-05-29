@@ -5,8 +5,12 @@ import { readdir, stat, rm } from "node:fs/promises";
 import { app, BrowserWindow, Menu } from "electron";
 import packManager from "../pack";
 import WebPack from "../packs/WebPack";
-import { wasm as wasmDir } from "../folders";
-import { lyricCacheManager, playCacheManager, urlCacheManager } from "../cache";
+import { cache as cacheDir, wasm as wasmDir } from "../folders";
+import {
+  httpCacheStorage,
+  lyricCacheManager,
+  playCacheManager,
+} from "../cache";
 import { checkUpdate } from "../update";
 import { registerIpcHandlers } from "../../bridge/register";
 import type { ManageContract } from "../../bridge/contracts/manage-api";
@@ -65,7 +69,35 @@ export default function showManageWindow() {
       getStats: async () => {
         const [playCacheInfo, httpStats, lyrics, wasm] = await Promise.all([
           playCacheManager?.getInfo(),
-          urlCacheManager?.getStats(),
+          (async () => {
+            let entryCount = -1;
+            let sizeBytes = 0;
+
+            const dbFile = resolve(cacheDir, "http.db");
+            const walFile = resolve(cacheDir, "http.db-wal");
+            const shmFile = resolve(cacheDir, "http.db-shm");
+
+            const promises: Promise<unknown>[] = [
+              stat(dbFile).then((v) => (sizeBytes += v.size)),
+              stat(walFile).then((v) => (sizeBytes += v.size)),
+              stat(shmFile).then((v) => (sizeBytes += v.size)),
+            ];
+
+            const iter = httpCacheStorage?.iterator?.(undefined);
+            if (iter) {
+              promises.push(
+                (async () => {
+                  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                  for await (const v of iter) {
+                    entryCount++;
+                  }
+                })()
+              );
+            }
+
+            await Promise.allSettled(promises);
+            return { entryCount, sizeBytes };
+          })(),
           lyricCacheManager?.getStats(),
           (async () => {
             try {
@@ -104,7 +136,7 @@ export default function showManageWindow() {
       },
       clearResources: async (_event, category: "http" | "lyrics" | "wasm") => {
         if (category === "http") {
-          await urlCacheManager?.clear();
+          await httpCacheStorage?.clear();
         } else if (category === "lyrics") {
           await lyricCacheManager?.clear();
         } else if (category === "wasm") {
