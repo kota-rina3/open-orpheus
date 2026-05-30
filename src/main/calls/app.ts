@@ -105,7 +105,7 @@ registerCallHandler<[string, string, string], void>(
         if (subItem === "hardware-acceleration") {
           if (value === "1") {
             // Enable hardware accel
-            await rm(disableHardwareAccelerationFlag);
+            await rm(disableHardwareAccelerationFlag, { force: true });
           } else {
             // Disable hardware accel
             await writeFile(disableHardwareAccelerationFlag, "", {
