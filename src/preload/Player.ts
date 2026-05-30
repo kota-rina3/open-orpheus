@@ -231,7 +231,7 @@ export default class Player extends Emittery<PlayerEvents> {
       },
       { once: true }
     );
-    this._audio.src = `audio://audio/${playInfo.songId}`;
+    this._audio.src = `audio://audio?t=${Date.now()}`;
     this._audio.load();
     return this._audio;
   }

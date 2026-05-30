@@ -286,6 +286,18 @@ app.on("ready", async () => {
     await Promise.all([
       // Initialize util module
       import("./main/util").then((m) => m.default()),
+      // Set temp dir for streamer and run cleanup
+      import("./main/audio/OnlineStreamer").then(async (m) => {
+        m.OnlineStreamer.tempDir = path.resolve(
+          os.tmpdir(),
+          "open-orpheus-streamer"
+        );
+        // This will be done in the background, the OnlineStreamer will know what files are
+        // currently being used, cleanup will only clean the leftovers from previous usages.
+        m.OnlineStreamer.cleanup().catch((e) => {
+          console.error("Failed to cleanup OnlineStreamer temporary files:", e);
+        });
+      }),
       import("./main/afp"),
       import("./main/channel"),
       import("./main/request").then(async (m) => {
