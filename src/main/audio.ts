@@ -70,7 +70,7 @@ ipcMain.handle(
       });
 
       streamer.on("complete", async () => {
-        if (state?.playInfo.songId !== songId) return;
+        if (state?.playInfo.songId !== songId || streamer.destroyed) return;
         const buf = await streamer.readBuffer();
         playCacheManager
           ?.cacheTrack(songId, buf, {
@@ -83,6 +83,10 @@ ipcMain.handle(
           .catch((err) => {
             console.error("[audio] failed to cache track:", err);
           });
+      });
+
+      streamer.on("error", (e) => {
+        console.log("OnlineStreamer error:", e.data);
       });
 
       state = {

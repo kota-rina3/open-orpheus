@@ -49,7 +49,11 @@ export class OnlineStreamer extends Emittery<OnlineStreamerEvents> {
   private readonly metaReadyPromise: Promise<void>;
   private readonly emittedErrors = new WeakSet<Error>();
   private mimeType = DEFAULT_MIME_TYPE;
-  private destroyed = false;
+  private _destroyed = false;
+
+  get destroyed(): boolean {
+    return this._destroyed;
+  }
 
   static async cleanup() {
     await mkdir(OnlineStreamer.tempDir, { recursive: true });
@@ -96,7 +100,7 @@ export class OnlineStreamer extends Emittery<OnlineStreamerEvents> {
   async handleRequest(request: Request) {
     try {
       await this.metaReadyPromise;
-      if (this.destroyed) {
+      if (this._destroyed) {
         return new Response("OnlineStreamer has been destroyed", {
           status: 410,
         });
@@ -154,23 +158,28 @@ export class OnlineStreamer extends Emittery<OnlineStreamerEvents> {
   }
 
   getDownloadedIntervals() {
+    this.assertNotDestroyed();
     return this.tracker.getIntervals();
   }
 
   async readBuffer(start?: number, end?: number) {
+    this.assertNotDestroyed();
     await this.metaReadyPromise;
+    this.assertNotDestroyed();
+
     const range = this.normalizeReadRange(start, end);
     return this.storage.readBuffer(range.start, range.end);
   }
 
   createReadStream(start?: number, end?: number) {
+    this.assertNotDestroyed();
     return Readable.from(this.createReadStreamIterator(start, end));
   }
 
   async destroy() {
-    if (this.destroyed) return;
+    if (this._destroyed) return;
 
-    this.destroyed = true;
+    this._destroyed = true;
     this.metaAbortController.abort(new Error("OnlineStreamer destroyed"));
     this.scheduler.destroy();
 
@@ -299,9 +308,18 @@ export class OnlineStreamer extends Emittery<OnlineStreamerEvents> {
   }
 
   private async *createReadStreamIterator(start?: number, end?: number) {
+    this.assertNotDestroyed();
     await this.metaReadyPromise;
+    this.assertNotDestroyed();
+
     const range = this.normalizeReadRange(start, end);
     yield* this.storage.readRange(range.start, range.end);
+  }
+
+  private assertNotDestroyed() {
+    if (this._destroyed) {
+      throw new Error("OnlineStreamer has been destroyed");
+    }
   }
 
   private emitProgress() {
@@ -316,7 +334,7 @@ export class OnlineStreamer extends Emittery<OnlineStreamerEvents> {
   }
 
   private emitError(error: Error) {
-    if (this.destroyed) return;
+    if (this._destroyed) return;
     if (this.emittedErrors.has(error)) return;
 
     this.emittedErrors.add(error);
