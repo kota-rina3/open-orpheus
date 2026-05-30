@@ -8,6 +8,10 @@ type GotStream = ReturnType<typeof got.stream>;
 const BACKGROUND_RETRY_MIN_DELAY = 1000;
 const BACKGROUND_RETRY_MAX_DELAY = 15_000;
 
+type HttpStatusError = Error & {
+  statusCode?: number;
+};
+
 type Range = {
   start: number;
   end: number;
@@ -402,7 +406,8 @@ export default class DownloadScheduler {
 
         const error = new Error(
           `Remote source rejected range ${start}-${end - 1}: ${response.statusCode}`
-        );
+        ) as HttpStatusError;
+        error.statusCode = response.statusCode;
         settled = true;
         request.destroy(error);
         reject(error);
@@ -468,7 +473,9 @@ function toError(error: unknown) {
 
 function isFatalBackgroundError(error: Error) {
   const code = (error as NodeJS.ErrnoException).code;
+  const statusCode = (error as HttpStatusError).statusCode;
   return (
+    (typeof statusCode === "number" && statusCode >= 400) ||
     code === "ENOSPC" ||
     code === "EACCES" ||
     code === "EROFS" ||
