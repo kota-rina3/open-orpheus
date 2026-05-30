@@ -129,8 +129,7 @@ export default function registerAudioStreamerScheme(protocol: Protocol) {
           return new Response(Readable.toWeb(nodeStream), {
             status: 200,
             headers: {
-              "Content-Type":
-                mime.getType(path) || "application/octet-stream",
+              "Content-Type": mime.getType(path) || "application/octet-stream",
               "Content-Length": String(fileStat.size),
             },
           });
