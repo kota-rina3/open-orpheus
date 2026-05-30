@@ -5,6 +5,9 @@ import type StorageManager from "./StorageManager";
 
 type GotStream = ReturnType<typeof got.stream>;
 
+const BACKGROUND_RETRY_MIN_DELAY = 1000;
+const BACKGROUND_RETRY_MAX_DELAY = 15_000;
+
 type Range = {
   start: number;
   end: number;
@@ -55,6 +58,7 @@ export default class DownloadScheduler {
   private writeChain: Promise<void> = Promise.resolve();
   private activeUrgentRange: ActiveUrgentRange | null = null;
   private urgentRangeVersion = 0;
+  private backgroundRetryDelay = BACKGROUND_RETRY_MIN_DELAY;
   private readonly urgentRangeWaiters = new Set<() => void>();
 
   constructor(options: DownloadSchedulerOptions) {
@@ -199,14 +203,33 @@ export default class DownloadScheduler {
       }
 
       const { gap } = gapResult;
-      for await (const chunk of this.downloadRange(
-        gap.start,
-        gap.end,
-        "background",
-        this.backgroundController.signal
-      )) {
-        void chunk;
-        // The background worker only persists bytes and updates the tracker.
+      try {
+        for await (const chunk of this.downloadRange(
+          gap.start,
+          gap.end,
+          "background",
+          this.backgroundController.signal
+        )) {
+          void chunk;
+          // The background worker only persists bytes and updates the tracker.
+        }
+        this.backgroundRetryDelay = BACKGROUND_RETRY_MIN_DELAY;
+      } catch (error) {
+        if (this.destroyed || this.backgroundController.signal.aborted) return;
+
+        const normalizedError = toError(error);
+        this.onError(normalizedError);
+
+        if (isFatalBackgroundError(normalizedError)) return;
+
+        await delay(
+          this.backgroundRetryDelay,
+          this.backgroundController.signal
+        );
+        this.backgroundRetryDelay = Math.min(
+          this.backgroundRetryDelay * 2,
+          BACKGROUND_RETRY_MAX_DELAY
+        );
       }
     }
   }
@@ -441,4 +464,30 @@ export default class DownloadScheduler {
 function toError(error: unknown) {
   if (error instanceof Error) return error;
   return new Error(String(error));
+}
+
+function isFatalBackgroundError(error: Error) {
+  const code = (error as NodeJS.ErrnoException).code;
+  return (
+    code === "ENOSPC" ||
+    code === "EACCES" ||
+    code === "EROFS" ||
+    code === "EMFILE" ||
+    code === "ENFILE"
+  );
+}
+
+function delay(ms: number, signal: AbortSignal) {
+  if (signal.aborted) return Promise.resolve();
+
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timeout = setTimeout(done, ms);
+
+    signal.addEventListener("abort", done, { once: true });
+  });
 }
