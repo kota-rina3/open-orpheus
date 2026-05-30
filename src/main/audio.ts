@@ -41,7 +41,7 @@ function sendProgress(prog: number) {
 
 ipcMain.handle(
   "audio.updatePlayInfo",
-  async (event, playInfo: AudioPlayInfo | null) => {
+  (event, playInfo: AudioPlayInfo | null) => {
     if (state?.type === AudioType.URL) {
       // We don't await this, let it destroy in background
       state.streamer.destroy().catch((e) => {
