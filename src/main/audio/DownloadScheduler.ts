@@ -122,6 +122,8 @@ export default class DownloadScheduler {
         throw error;
       }
 
+      if (signal.aborted || this.destroyed) return;
+
       if (
         received === 0 &&
         this.tracker.getDownloadedEnd(cursor, end) === cursor
