@@ -5,6 +5,20 @@ import type StorageManager from "./StorageManager";
 
 type GotStream = ReturnType<typeof got.stream>;
 
+type Range = {
+  start: number;
+  end: number;
+};
+
+type ActiveUrgentRange = Range & {
+  signal: AbortSignal;
+};
+
+type BackgroundGapResult =
+  | { type: "gap"; gap: Range }
+  | { type: "blocked"; version: number }
+  | { type: "complete" };
+
 type DownloadSchedulerOptions = {
   url: string;
   toleranceThreshold: number;
@@ -39,6 +53,9 @@ export default class DownloadScheduler {
   private destroyed = false;
   private completeEmitted = false;
   private writeChain: Promise<void> = Promise.resolve();
+  private activeUrgentRange: ActiveUrgentRange | null = null;
+  private urgentRangeVersion = 0;
+  private readonly urgentRangeWaiters = new Set<() => void>();
 
   constructor(options: DownloadSchedulerOptions) {
     this.url = options.url;
@@ -104,6 +121,13 @@ export default class DownloadScheduler {
 
       const missEnd = this.tracker.getGapEnd(cursor, end);
       let received = 0;
+      const urgentRange: ActiveUrgentRange = {
+        start: cursor,
+        end: this.getUrgentReservedEnd(cursor, missEnd),
+        signal,
+      };
+      this.activeUrgentRange = urgentRange;
+      this.notifyUrgentRangeChanged();
 
       try {
         for await (const chunk of this.downloadRange(
@@ -114,12 +138,20 @@ export default class DownloadScheduler {
         )) {
           received += chunk.byteLength;
           cursor += chunk.byteLength;
+          urgentRange.start = cursor;
+          urgentRange.end = this.getUrgentReservedEnd(cursor, missEnd);
+          this.notifyUrgentRangeChanged();
           yield chunk;
         }
       } catch (error) {
         if (signal.aborted || this.destroyed) return;
         this.onError(toError(error));
         throw error;
+      } finally {
+        if (this.activeUrgentRange === urgentRange) {
+          this.activeUrgentRange = null;
+          this.notifyUrgentRangeChanged();
+        }
       }
 
       if (signal.aborted || this.destroyed) return;
@@ -151,13 +183,22 @@ export default class DownloadScheduler {
   private async runBackground() {
     while (!this.destroyed && !this.backgroundController.signal.aborted) {
       const totalLength = this.getTotalLength();
-      const [gap] = this.tracker.getMissingIntervals(0, totalLength);
+      const gapResult = this.findBackgroundGap(totalLength);
 
-      if (!gap) {
+      if (gapResult.type === "complete") {
         this.emitCompleteIfNeeded();
         return;
       }
 
+      if (gapResult.type === "blocked") {
+        await this.waitForUrgentRangeChange(
+          this.backgroundController.signal,
+          gapResult.version
+        );
+        continue;
+      }
+
+      const { gap } = gapResult;
       for await (const chunk of this.downloadRange(
         gap.start,
         gap.end,
@@ -167,6 +208,78 @@ export default class DownloadScheduler {
         void chunk;
         // The background worker only persists bytes and updates the tracker.
       }
+    }
+  }
+
+  private findBackgroundGap(totalLength: number): BackgroundGapResult {
+    const gaps = this.tracker.getMissingIntervals(0, totalLength);
+    if (gaps.length === 0) return { type: "complete" };
+
+    const activeUrgentRange = this.activeUrgentRange;
+    if (
+      !activeUrgentRange ||
+      activeUrgentRange.signal.aborted ||
+      activeUrgentRange.end <= activeUrgentRange.start
+    ) {
+      return { type: "gap", gap: gaps[0] };
+    }
+
+    for (const gap of gaps) {
+      if (
+        gap.end <= activeUrgentRange.start ||
+        gap.start >= activeUrgentRange.end
+      ) {
+        return { type: "gap", gap };
+      }
+
+      if (activeUrgentRange.end < gap.end) {
+        return {
+          type: "gap",
+          gap: { start: activeUrgentRange.end, end: gap.end },
+        };
+      }
+
+      if (gap.start < activeUrgentRange.start) {
+        return {
+          type: "gap",
+          gap: { start: gap.start, end: activeUrgentRange.start },
+        };
+      }
+    }
+
+    return { type: "blocked", version: this.urgentRangeVersion };
+  }
+
+  private getUrgentReservedEnd(start: number, limit: number) {
+    return Math.min(limit, start + Math.max(1, this.toleranceThreshold));
+  }
+
+  private waitForUrgentRangeChange(signal: AbortSignal, version: number) {
+    if (signal.aborted || this.urgentRangeVersion !== version) {
+      return Promise.resolve();
+    }
+
+    return new Promise<void>((resolve) => {
+      const done = () => {
+        signal.removeEventListener("abort", done);
+        this.urgentRangeWaiters.delete(done);
+        resolve();
+      };
+
+      this.urgentRangeWaiters.add(done);
+      signal.addEventListener("abort", done, { once: true });
+
+      if (this.urgentRangeVersion !== version) {
+        done();
+      }
+    });
+  }
+
+  private notifyUrgentRangeChanged() {
+    this.urgentRangeVersion += 1;
+
+    for (const waiter of this.urgentRangeWaiters) {
+      waiter();
     }
   }
 
@@ -212,6 +325,15 @@ export default class DownloadScheduler {
         }
 
         if (chunk.byteLength === 0) break;
+
+        if (
+          mode === "urgent" &&
+          this.tracker.getDownloadedEnd(offset, end) > offset
+        ) {
+          stopReason = "collision";
+          request.destroy();
+          return;
+        }
 
         const writeResult = await this.checkBeforeWrite(offset, chunk, end);
         if (writeResult === "collision") {
