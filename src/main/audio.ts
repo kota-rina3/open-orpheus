@@ -42,7 +42,7 @@ function sendProgress(prog: number) {
 ipcMain.handle(
   "audio.updatePlayInfo",
   async (event, playInfo: AudioPlayInfo | null) => {
-    if (state?.type) {
+    if (state?.type === AudioType.URL) {
       try {
         await state.streamer.destroy();
       } catch (e) {
