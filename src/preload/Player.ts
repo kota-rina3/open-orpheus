@@ -232,7 +232,13 @@ export default class Player extends Emittery<PlayerEvents> {
     if (enabled) {
       this._audioSourceNode.connect(node);
     } else {
-      this._audioSourceNode.disconnect(node);
+      try {
+        this._audioSourceNode.disconnect(node);
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "InvalidAccessError")
+          return;
+        throw err;
+      }
     }
   }
 }
