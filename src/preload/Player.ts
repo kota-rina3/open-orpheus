@@ -109,6 +109,7 @@ export default class Player extends Emittery<PlayerEvents> {
   private _gainNode = this._audioCtx.createGain();
 
   private _honeyPotPromise: Promise<AudioWorkletNode>;
+  private _audioDataDesiredEnabled = false;
   private _audioDataEnabled = false;
 
   private _playInfo: AudioPlayInfo | null = null;
@@ -127,12 +128,14 @@ export default class Player extends Emittery<PlayerEvents> {
    *
    * This is used for audio visualizing, so it's not targeted for reliability.
    * Don't use it for audio capture needs that requires reliability.
-   *
-   * Note that enabling and disabling are done in async.
-   * If the worklet is still being loaded, you might expect some delays on enabling/disabling.
    */
   set enableAudioData(value: boolean) {
-    if (this._audioDataEnabled === value) return;
+    if (
+      this._audioDataEnabled === value ||
+      this._audioDataDesiredEnabled !== this._audioDataEnabled
+    )
+      return;
+    this._audioDataDesiredEnabled = value;
     (async () => {
       const pcmHoneypot = await this._honeyPotPromise;
       if (value) {
@@ -142,6 +145,7 @@ export default class Player extends Emittery<PlayerEvents> {
       }
       this._audioDataEnabled = value;
     })().catch((err) => {
+      this._audioDataDesiredEnabled = this._audioDataEnabled;
       console.error("Failed to enable audio data capture:", err);
     });
   }
