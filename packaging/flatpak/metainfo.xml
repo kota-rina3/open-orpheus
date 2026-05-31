@@ -62,6 +62,53 @@
   </screenshots>
 
   <releases>
+    <release version="0.13.0" date="2026-05-31">
+      <url type="details">https://github.com/YUCLing/open-orpheus/releases/tag/v0.13.0</url>
+      <description>
+        <ul>
+          <li>Support launching from web links.</li>
+          <li xml:lang="zh-CN">支持网页端唤起。</li>
+          <li>Handle mute button call in mini player.</li>
+          <li xml:lang="zh-CN">迷你播放器静音按钮的 call 没有被处理。</li>
+          <li>Allow disabling hardware acceleration.</li>
+          <li xml:lang="zh-CN">允许禁用硬件加速。</li>
+          <li>Support using system CA store.</li>
+          <li xml:lang="zh-CN">支持使用系统 CA 存储。</li>
+          <li>Word-by-word lyrics.</li>
+          <li xml:lang="zh-CN">逐字歌词。</li>
+          <li>Allow disabling desktop lyrics line interpolation progress.</li>
+          <li xml:lang="zh-CN">允许禁用桌面歌词行插值进度功能。</li>
+          <li>Fix calls hanging indefinitely in some cases.</li>
+          <li xml:lang="zh-CN">修复部分 call 永远卡死。</li>
+          <li>Fix windows using input region being non-interactive on non-Linux platforms.</li>
+          <li xml:lang="zh-CN">修复使用 input region 的窗口在非 Linux 下无法交互。</li>
+          <li>Fix race condition in AudioStreamer.</li>
+          <li xml:lang="zh-CN">修复 AudioStreamer 中的竞争条件。</li>
+          <li>Fix native menu not existing after app launch.</li>
+          <li xml:lang="zh-CN">修复原生菜单在应用启动后不存在。</li>
+          <li>Slightly increase update notification popup delay.</li>
+          <li xml:lang="zh-CN">稍微添加更新消息弹窗延迟。</li>
+          <li>Refactor events (migrate from EventTarget to Emittery).</li>
+          <li xml:lang="zh-CN">重构事件（从 EventTarget 迁移到 Emittery）。</li>
+          <li>Refactor settings storage (use Keyv).</li>
+          <li xml:lang="zh-CN">重构设置存储（使用 Keyv 储存）。</li>
+          <li>Refactor desktop lyrics cross-process communication.</li>
+          <li xml:lang="zh-CN">重构桌面歌词跨进程通信。</li>
+          <li>Refactor HTTP caching mechanism (use got native caching).</li>
+          <li xml:lang="zh-CN">重构 HTTP 缓存机制（使用 got 原生缓存）。</li>
+          <li>Decouple YunxinIM from channels.</li>
+          <li xml:lang="zh-CN">将 YunxinIM 与 channel 解耦。</li>
+          <li>Refactor AudioStreamer to OnlineStreamer.</li>
+          <li xml:lang="zh-CN">将 AudioStreamer 重构为 OnlineStreamer。</li>
+          <li>General code cleanup.</li>
+          <li xml:lang="zh-CN">代码整体清理。</li>
+          <li>Refactor music recognition.</li>
+          <li xml:lang="zh-CN">重构听歌识曲。</li>
+          <li>Refactor audio data capture worklet management.</li>
+          <li xml:lang="zh-CN">重构音频数据捕捉 Worklet 管理。</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.12.2" date="2026-05-24">
       <url type="details">https://github.com/YUCLing/open-orpheus/releases/tag/v0.12.2</url>
       <description>
