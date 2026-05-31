@@ -122,9 +122,17 @@ export default class Player extends Emittery<PlayerEvents> {
     return this._audioDataEnabled;
   }
 
+  /**
+   * Enables audio data capture.
+   *
+   * This is used for audio visualizing, so it's not targeted for reliability.
+   * Don't use it for audio capture needs that requires reliability.
+   *
+   * Note that enabling and disabling are done in async.
+   * If the worklet is still being loaded, you might expect some delays on enabling/disabling.
+   */
   set enableAudioData(value: boolean) {
     if (this._audioDataEnabled === value) return;
-    this._audioDataEnabled = value;
     (async () => {
       const pcmHoneypot = await this._honeyPotPromise;
       if (value) {
@@ -132,7 +140,10 @@ export default class Player extends Emittery<PlayerEvents> {
       } else {
         this._audioSourceNode.disconnect(pcmHoneypot);
       }
-    })();
+      this._audioDataEnabled = value;
+    })().catch((err) => {
+      console.error("Failed to enable audio data capture:", err);
+    });
   }
 
   get lyricContent(): LyricContent | null {
@@ -182,7 +193,7 @@ export default class Player extends Emittery<PlayerEvents> {
     this._audioSourceNode.connect(this._gainNode);
     this._gainNode.connect(this._audioCtx.destination);
 
-    this._honeyPotPromise = new Promise((resolve) => {
+    this._honeyPotPromise = new Promise((resolve, reject) => {
       let attempts = 0;
       const loadHoneypot = () => {
         attempts++;
@@ -202,9 +213,12 @@ export default class Player extends Emittery<PlayerEvents> {
 
             resolve(node);
           })
-          .catch(() => {
-            // Failed, infinite debounce retry (max 30s, add 1s per attempt)
-            attempts = Math.min(attempts, 30);
+          .catch((e) => {
+            // Failed, debounce retry 30 times (max 30s, add 1s per attempt)
+            if (attempts > 30) {
+              reject(e);
+              return;
+            }
             setTimeout(loadHoneypot, attempts * 1000);
           });
       };
