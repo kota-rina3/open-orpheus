@@ -115,9 +115,16 @@ registerCallHandler<[{ playId: string }], [typeof failedPlaybackInfo]>(
   () => [failedPlaybackInfo]
 );
 
-registerCallHandler<[number], void>("audioplayer.enableAudioData", (enable) => {
-  player.enableAudioData = enable === 1;
-});
+registerCallHandler<[number], void>(
+  "audioplayer.enableAudioData",
+  async (enable) => {
+    try {
+      await player.setAudioDataEnabled(enable === 1);
+    } catch (err) {
+      console.error("Failed to change audio data capture state:", err);
+    }
+  }
+);
 
 registerCallHandler<
   [{ device: string; use_play_device: boolean }],

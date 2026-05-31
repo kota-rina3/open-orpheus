@@ -92,7 +92,7 @@ export type AudioPlayInfo = {
 export type PlayerEvents = {
   lyriccontentupdate: LyricContent | null;
   volumechange: number;
-  audiodata: { data: unknown; pts: unknown }; // TODO: Typings
+  audiodata: { data: ArrayBuffer; pts: number };
   lyricstyleupdate: { key: string | symbol; value: unknown };
   playinfoupdate: AudioPlayInfo;
   load: { id: string };
@@ -108,9 +108,7 @@ export default class Player extends Emittery<PlayerEvents> {
 
   private _gainNode = this._audioCtx.createGain();
 
-  private _pcmTapNode: AudioWorkletNode | null = null;
-  private _pcmTapReady = false;
-  private _audioDataEnabled = false;
+  private _honeyPotPromise: Promise<AudioWorkletNode>;
 
   private _playInfo: AudioPlayInfo | null = null;
   private _lyricContent: LyricContent | null = null;
@@ -119,20 +117,6 @@ export default class Player extends Emittery<PlayerEvents> {
   playlist: Playlist = { items: [], currentPlay: "" };
 
   // #region Getters & Setters
-  get enableAudioData() {
-    return this._audioDataEnabled;
-  }
-
-  set enableAudioData(value: boolean) {
-    if (this._audioDataEnabled === value) return;
-    this._audioDataEnabled = value;
-    if (value) {
-      this._connectPcmTap();
-    } else {
-      this._disconnectPcmTap();
-    }
-  }
-
   get lyricContent(): LyricContent | null {
     return this._lyricContent;
   }
@@ -179,46 +163,40 @@ export default class Player extends Emittery<PlayerEvents> {
 
     this._audioSourceNode.connect(this._gainNode);
     this._gainNode.connect(this._audioCtx.destination);
-  }
 
-  private async _ensurePcmTapReady() {
-    if (this._pcmTapReady) return;
-    this._pcmTapReady = true;
+    this._honeyPotPromise = new Promise((resolve, reject) => {
+      let attempts = 0;
+      const loadHoneypot = () => {
+        attempts++;
+        this._audioCtx.audioWorklet
+          .addModule("audio://worklet/pcm-honeypot.js")
+          .then(() => {
+            const node = new AudioWorkletNode(this._audioCtx, "pcm-honeypot", {
+              numberOfInputs: 1,
+              numberOfOutputs: 0,
+              channelCount: 2,
+              channelCountMode: "explicit",
+            });
 
-    await this._audioCtx.audioWorklet.addModule(
-      "audio://worklet/audio-data.js"
-    );
+            node.port.onmessage = (ev) => {
+              this.emit("audiodata", ev.data);
+            };
 
-    this._pcmTapNode = new AudioWorkletNode(this._audioCtx, "pcm-tap", {
-      numberOfInputs: 1,
-      numberOfOutputs: 1,
-      channelCount: 2,
-      channelCountMode: "explicit",
+            resolve(node);
+          })
+          .catch((e) => {
+            // Failed, debounce retry 30 times (max 30s, add 1s per attempt)
+            if (attempts > 30) {
+              reject(e);
+              return;
+            }
+            setTimeout(loadHoneypot, attempts * 1000);
+          });
+      };
+
+      // Start the initial attempt
+      loadHoneypot();
     });
-
-    this._pcmTapNode.port.onmessage = (ev) => {
-      this.emit("audiodata", ev.data);
-    };
-  }
-
-  private async _connectPcmTap() {
-    await this._ensurePcmTapReady();
-    if (!this._pcmTapNode) return;
-
-    // Rewire: source → tap → destination
-    this._audioSourceNode.disconnect();
-    this._audioSourceNode.connect(this._pcmTapNode);
-    this._pcmTapNode.connect(this._gainNode);
-  }
-
-  private _disconnectPcmTap() {
-    if (!this._pcmTapNode) return;
-
-    // Rewire: source → destination (bypass tap)
-    this._pcmTapNode.disconnect();
-    this._audioSourceNode.disconnect();
-    this._audioSourceNode.connect(this._gainNode);
-    this._pcmTapNode.port.postMessage("reset");
   }
 
   async load(playInfo: AudioPlayInfo): Promise<HTMLAudioElement> {
@@ -241,6 +219,27 @@ export default class Player extends Emittery<PlayerEvents> {
     this._audio.currentTime = 0;
     this._audio.src = "";
     this._playInfo = null;
-    this._pcmTapNode?.port.postMessage("reset");
+    // Simply try, does nothing if failed.
+    this._honeyPotPromise
+      .then((node) => {
+        node.port.postMessage("reset");
+      })
+      .catch(() => {});
+  }
+
+  async setAudioDataEnabled(enabled: boolean) {
+    const node = await this._honeyPotPromise;
+    if (enabled) {
+      this._audioSourceNode.connect(node);
+    } else {
+      node.port.postMessage("reset");
+      try {
+        this._audioSourceNode.disconnect(node);
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "InvalidAccessError")
+          return;
+        throw err;
+      }
+    }
   }
 }
