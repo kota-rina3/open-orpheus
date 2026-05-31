@@ -31,6 +31,7 @@ class MusicRecorderProcessor extends AudioWorkletProcessor {
   }
 
   private postMatch(frameCount: number, final: boolean) {
+    if (final) this.done = true;
     this.times++;
     const audioData = this.buffer.slice(0, frameCount).buffer;
     this.port.postMessage(
