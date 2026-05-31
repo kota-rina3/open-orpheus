@@ -182,22 +182,36 @@ export default class Player extends Emittery<PlayerEvents> {
     this._audioSourceNode.connect(this._gainNode);
     this._gainNode.connect(this._audioCtx.destination);
 
-    this._honeyPotPromise = this._audioCtx.audioWorklet
-      .addModule("audio://worklet/pcm-honeypot.js")
-      .then(() => {
-        const node = new AudioWorkletNode(this._audioCtx, "pcm-honeypot", {
-          numberOfInputs: 1,
-          numberOfOutputs: 0,
-          channelCount: 2,
-          channelCountMode: "explicit",
-        });
+    this._honeyPotPromise = new Promise((resolve) => {
+      let attempts = 0;
+      const loadHoneypot = () => {
+        attempts++;
+        this._audioCtx.audioWorklet
+          .addModule("audio://worklet/pcm-honeypot.js")
+          .then(() => {
+            const node = new AudioWorkletNode(this._audioCtx, "pcm-honeypot", {
+              numberOfInputs: 1,
+              numberOfOutputs: 0,
+              channelCount: 2,
+              channelCountMode: "explicit",
+            });
 
-        node.port.onmessage = (ev) => {
-          this.emit("audiodata", ev.data);
-        };
+            node.port.onmessage = (ev) => {
+              this.emit("audiodata", ev.data);
+            };
 
-        return node;
-      });
+            resolve(node);
+          })
+          .catch(() => {
+            // Failed, infinite debounce retry (max 30s, add 1s per attempt)
+            attempts = Math.min(attempts, 30);
+            setTimeout(loadHoneypot, attempts * 1000);
+          });
+      };
+
+      // Start the initial attempt
+      loadHoneypot();
+    });
   }
 
   async load(playInfo: AudioPlayInfo): Promise<HTMLAudioElement> {
@@ -215,11 +229,13 @@ export default class Player extends Emittery<PlayerEvents> {
     return this._audio;
   }
 
-  async stop() {
+  stop() {
     this._audio.pause();
     this._audio.currentTime = 0;
     this._audio.src = "";
     this._playInfo = null;
-    (await this._honeyPotPromise).port.postMessage("reset");
+    this._honeyPotPromise.then((node) => {
+      node.port.postMessage("reset");
+    });
   }
 }
