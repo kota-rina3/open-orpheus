@@ -157,6 +157,7 @@
     return null;
   });
 
+  // Visual progress: respects useProgress flag (0 or 1 when disabled)
   let primaryProgress = $derived(
     primaryLine && useProgress
       ? wordProgress(primaryLine, adjustedTime)
@@ -170,9 +171,18 @@
   let secondaryProgress = $derived.by(() => {
     if (!secondaryLine) return 0;
     if (!useProgress) return isSecondaryCurrent ? 1 : 0;
-    // For translation lines or next lines, compute their own progress
     return wordProgress(secondaryLine, adjustedTime);
   });
+
+  // Scroll progress: always follows actual line timing so overflow scroll
+  // animates smoothly even when useProgress is false
+  let primaryScrollProgress = $derived(
+    primaryLine ? wordProgress(primaryLine, adjustedTime) : 0
+  );
+
+  let secondaryScrollProgress = $derived(
+    secondaryLine ? wordProgress(secondaryLine, adjustedTime) : 0
+  );
 
   // Overflow scrolling: measure text wrapper width vs line container width
   let line1WrapperEl: HTMLDivElement | undefined = $state();
@@ -244,10 +254,10 @@
   });
 
   let line1Scroll = $derived(
-    line1Overflow > 0 ? line1Overflow * primaryProgress : 0
+    line1Overflow > 0 ? line1Overflow * primaryScrollProgress : 0
   );
   let line2Scroll = $derived(
-    line2Overflow > 0 ? line2Overflow * secondaryProgress : 0
+    line2Overflow > 0 ? line2Overflow * secondaryScrollProgress : 0
   );
 
   // Font style string
