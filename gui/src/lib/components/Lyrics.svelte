@@ -207,16 +207,16 @@
 
   // Measure overflow for a single line; returns px of hidden content
   function measureLineOverflow(
-    containerEl: HTMLDivElement | undefined,
+    lineContainerEl: HTMLDivElement | undefined,
     vertical: boolean
   ): number {
-    if (!containerEl) return 0;
+    if (!lineContainerEl) return 0;
     const scrollDim = vertical
-      ? containerEl.scrollHeight
-      : containerEl.scrollWidth;
+      ? lineContainerEl.scrollHeight
+      : lineContainerEl.scrollWidth;
     const boxDim = vertical
-      ? containerEl.clientHeight
-      : containerEl.clientWidth;
+      ? lineContainerEl.clientHeight
+      : lineContainerEl.clientWidth;
     return Math.max(0, scrollDim - boxDim);
   }
 
