@@ -54,8 +54,8 @@ export type AppMenuEvents = {
 function dipToScreenRect(rect: Electron.Rectangle): Electron.Rectangle {
   const { x, y, width, height } = rect;
   const dis = screen.getDisplayNearestPoint({
-    x: (x + width) / 2,
-    y: (y + height) / 2,
+    x: x + width / 2,
+    y: y + height / 2,
   });
   return {
     x: x * dis.scaleFactor,
