@@ -111,8 +111,9 @@ pub fn get_cursor_position() -> Result<Option<(f64, f64)>> {
 
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = callback;
-        env.throw("Only supports Linux")
+        use napi::Error;
+
+        Err(Error::from_reason("Only supports Linux"))
     }
 }
 
