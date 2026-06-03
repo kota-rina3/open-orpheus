@@ -752,7 +752,7 @@ pub(super) fn query_pointer(window: u32) -> Option<(i16, i16)> {
     // Wait for the reply to arrive via feed_inbound
     let result = {
         let mut result_guard = pending.result.lock().ok()?;
-        if result_guard.is_none() {
+        while result_guard.is_none() {
             let (guard, timeout_result) = pending
                 .condvar
                 .wait_timeout(result_guard, Duration::from_millis(500))
