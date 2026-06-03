@@ -6,6 +6,7 @@ import Emittery from "emittery";
 import {
   captureNextWindowFirstCursorEnter,
   DesktopEnvironment,
+  getCursorPosition,
   getDesktopEnvironment,
 } from "@open-orpheus/window";
 
@@ -49,6 +50,20 @@ function parseButtonUrls(items: AppMenuItem[]) {
 export type AppMenuEvents = {
   close: undefined;
 };
+
+function dipToScreenRect(rect: Electron.Rectangle): Electron.Rectangle {
+  const { x, y, width, height } = rect;
+  const dis = screen.getDisplayNearestPoint({
+    x: (x + width) / 2,
+    y: (y + height) / 2,
+  });
+  return {
+    x: x * dis.scaleFactor,
+    y: y * dis.scaleFactor,
+    width: width * dis.scaleFactor,
+    height: height * dis.scaleFactor,
+  };
+}
 
 export default class AppMenu extends Emittery<AppMenuEvents> {
   private onClick: MenuClickHandler | null = null;
@@ -229,8 +244,19 @@ export default class AppMenu extends Emittery<AppMenuEvents> {
 
   // --- Non-Wayland: transparent popup BrowserWindow ---
   private showWindow() {
+    const de = getDesktopEnvironment();
+
     const wnd = createMenuWindow();
-    const cursor = screen.getCursorScreenPoint();
+    let cursor = screen.dipToScreenPoint(screen.getCursorScreenPoint());
+    if (de === DesktopEnvironment.X11) {
+      const pos = getCursorPosition();
+      if (pos) {
+        cursor = {
+          x: pos[0],
+          y: pos[1],
+        };
+      }
+    }
     const display = screen.getDisplayNearestPoint(cursor);
 
     const closeSubmenuWindow = () => {
@@ -296,7 +322,12 @@ export default class AppMenu extends Emittery<AppMenuEvents> {
         },
         reportSize: async (_event, width, height) => {
           if (sub.isDestroyed()) return;
-          const { x: dx, y: dy, width: dw, height: dh } = subDisplay.workArea;
+          const {
+            x: dx,
+            y: dy,
+            width: dw,
+            height: dh,
+          } = dipToScreenRect(subDisplay.workArea);
           let x = screenX;
           let y = screenY;
           if (x + width > dx + dw) x = bounds.x - Math.round(width);
@@ -338,7 +369,12 @@ export default class AppMenu extends Emittery<AppMenuEvents> {
       },
       reportSize: async (_event, width, height) => {
         if (this.closed || wnd.isDestroyed()) return;
-        const { x: dx, y: dy, width: dw, height: dh } = display.workArea;
+        const {
+          x: dx,
+          y: dy,
+          width: dw,
+          height: dh,
+        } = dipToScreenRect(display.workArea);
         const onBottomHalf = cursor.y > dy + dh / 2;
         let x = cursor.x;
         let y = onBottomHalf ? cursor.y - height : cursor.y;
