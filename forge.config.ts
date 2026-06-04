@@ -32,20 +32,23 @@ const config: ForgeConfig = {
             buildPath,
             "Electron.app/Contents/Resources"
           );
+          const frameworkResourcesPath = resolve(
+            buildPath,
+            "Electron.app/Contents/Frameworks/Electron Framework.framework/Resources"
+          );
 
           const resources = await readdir(resourcesPath, {
             withFileTypes: true,
           });
+          const frameworkResources = await readdir(frameworkResourcesPath, {
+            withFileTypes: true,
+          });
           await Promise.all(
-            resources.map(async (locale) => {
+            [...resources, ...frameworkResources].map(async (locale) => {
               if (!locale.isDirectory() || !locale.name.endsWith(".lproj"))
                 return;
               if (
-                LOCALES.includes(
-                  locale.name
-                    .substring(0, locale.name.length - 6)
-                    .replace("_", "-")
-                )
+                LOCALES.some((v) => locale.name.replace("_", "-").startsWith(v))
               )
                 return;
               await rm(resolve(locale.parentPath, locale.name), {
