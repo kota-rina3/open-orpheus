@@ -51,10 +51,16 @@ function validateSize(
         `expected ${expected} (0x11 + ${extCount} + ${payloadSize})`
     );
   }
-  // (N - 1) must be a multiple of 4
+  // Extension must be at least 5 bytes so that index 4 (the XOR key byte) exists
+  if (extCount < 5) {
+    throw new Error(
+      `NCAE header extension count must be at least 5; got ${extCount}`
+    );
+  }
+  // (N - 5) must be a multiple of 4 → valid values: 5, 9, 13, …
   if ((extCount - 1) & 3) {
     throw new Error(
-      `NCAE header extension count must be 1, 5, 9, 13, …; got ${extCount}`
+      `NCAE header extension count must be 5, 9, 13, …; got ${extCount}`
     );
   }
 }
