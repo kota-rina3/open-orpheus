@@ -382,16 +382,36 @@ registerCallHandler<[], [{ fullscreen: boolean; self: boolean }]>(
 
 registerCallbackHandler<
   [
-    {
-      type: "question";
-      appinfo: string;
-      desc: string;
-      subDesc: string;
-      avatarUrl: string;
-      yes: string;
-      no: string;
-      userdata: string;
-    },
+    | {
+        type: "question";
+        appinfo: string;
+        desc: string;
+        subDesc: string;
+        avatarUrl: string;
+        yes: string;
+        no: string;
+        userdata: string;
+      }
+    | {
+        type: "immersive_push_notify";
+        priority: "queue"; // TODO: To be expanded
+        userdata: string; // JSON string
+        btn_1_content: string; // "查看详情 >"
+        btn_2_content: string; // "一键播放"
+        free_audition: boolean;
+        menu: string; // AppMenu
+        title: string;
+        cover: string; // Image URL
+        desc: string;
+        push_icon_small: "";
+        push_icon_big: "";
+        daytime_formatpath: string; // "orpheus://orpheus/pub/public/assets/svg/home-page/date-%d.svg"
+        songs: {
+          songName: string;
+          songCover: string;
+          artist: string;
+        }[];
+      },
   ]
 >("app.systemUIHint", (callback, event, params) => {
   if (params.type !== "question") {
