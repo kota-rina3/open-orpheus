@@ -60,6 +60,11 @@ export default class AudioEffectManager {
   private readonly peqTail: AudioNode;
   private readonly peqGainNode: GainNode;
 
+  // ── ReplayGain (per-track loudness normalization) ────
+  private readonly replayGainNode: GainNode;
+  private _loudnessEnabled = false;
+  private _loudnessGainDb = 0;
+
   // ── Convolution Reverb ────────────────────────────────
   private readonly convolverNode: ConvolverNode;
   private convolverLoadSerial = 0;
@@ -136,12 +141,22 @@ export default class AudioEffectManager {
     this.peqGainNode.gain.value = 1;
     this.peqTail.connect(this.peqGainNode);
 
+    // ── ReplayGain (per-track loudness normalization) ──
+    this.replayGainNode = ctx.createGain();
+    this.replayGainNode.gain.value = 1; // 0 dB (unity)
+
     // ── Convolution Reverb ──────────────────────────────
     this.convolverNode = ctx.createConvolver();
     this.convolverNode.normalize = false;
 
     // ── Router: ordered slots (signal flows top→bottom) ──
     this.slots = [
+      {
+        name: "replaygain",
+        input: this.replayGainNode,
+        output: this.replayGainNode,
+        active: true, // always in the chain
+      },
       {
         name: "cmp",
         input: this.compressorNode,
@@ -373,6 +388,32 @@ export default class AudioEffectManager {
   setCompressorEnabled(on: boolean): void {
     this.compressorNode.ratio.value = on ? 12 : 1;
     this.setSlotActive("cmp", on);
+  }
+
+  // #endregion
+
+  // #region ReplayGain / Loudness
+
+  /**
+   * Enable or disable per-track loudness normalization (ReplayGain).
+   * When disabled, the gain is reset to 0 dB (unity).
+   */
+  setLoudnessEnabled(on: boolean): void {
+    this._loudnessEnabled = on;
+    this.replayGainNode.gain.value = on ? dbToGain(this._loudnessGainDb) : 1;
+  }
+
+  /**
+   * Set the replay gain adjustment for the current track.
+   *
+   * @param gain  Scaled integer; divide by 10000 to get dB.
+   *              Example: -49869 → -4.9869 dB.
+   */
+  setLoudnessGain(gain: number): void {
+    this._loudnessGainDb = gain / 10000;
+    if (this._loudnessEnabled) {
+      this.replayGainNode.gain.value = dbToGain(this._loudnessGainDb);
+    }
   }
 
   // #endregion

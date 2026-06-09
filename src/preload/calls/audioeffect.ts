@@ -355,6 +355,13 @@ registerCallHandler<
   }
 });
 
-registerCallHandler<[boolean], void>("audioeffect.setLoudnessON", () => {
-  console.warn("audioeffect.setLoudnessON is not implemented yet.");
+registerCallHandler<[boolean], void>("audioeffect.setLoudnessON", (enabled) => {
+  player.audioEffectManager.setLoudnessEnabled(enabled);
 });
+
+registerCallHandler<[{ gain: number }], void>(
+  "audioeffect.setLoudnessParams",
+  (params) => {
+    player.audioEffectManager.setLoudnessGain(params.gain);
+  }
+);
