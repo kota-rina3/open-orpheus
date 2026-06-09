@@ -4,6 +4,7 @@ import { Ncae, NcaeType } from "$sharedTypes/ncae";
 
 import { player } from "../audioplayer";
 import { registerCallHandler } from "../calls";
+import { dbToGain } from "../../util";
 
 type EqualizerData = {
   /** 10-band graphic equalizer. */
@@ -355,13 +356,24 @@ registerCallHandler<
   }
 });
 
+let loudnessGainEnabled = false;
+let loudnessGainDb = 0;
 registerCallHandler<[boolean], void>("audioeffect.setLoudnessON", (enabled) => {
-  player.audioEffectManager.setLoudnessEnabled(enabled);
+  loudnessGainEnabled = enabled;
+  if (enabled) {
+    player.loudnessGain.gain.value = dbToGain(loudnessGainDb);
+  } else {
+    player.loudnessGain.gain.value = 1;
+  }
 });
 
 registerCallHandler<[{ gain: number }], void>(
   "audioeffect.setLoudnessParams",
   (params) => {
-    player.audioEffectManager.setLoudnessGain(params.gain);
+    const { gain } = params;
+    loudnessGainDb = gain / 10000;
+    if (loudnessGainEnabled) {
+      player.loudnessGain.gain.value = dbToGain(loudnessGainDb);
+    }
   }
 );

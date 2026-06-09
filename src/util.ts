@@ -39,3 +39,8 @@ export function imageSize(
     return [w, h];
   }
 }
+
+/** Convert dB to linear gain. */
+export function dbToGain(db: number): number {
+  return 10 ** (db / 20);
+}
