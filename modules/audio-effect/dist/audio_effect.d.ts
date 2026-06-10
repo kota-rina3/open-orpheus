@@ -14,7 +14,13 @@ export class EarlyReflections {
     /**
      * Configure the early-reflection pattern.
      *
-     * Known values: 15 = generic, 23 = room, 24 = bathroom.
+     * Known values:
+     *   0  = church,        2  = concert,
+     *   4  = live/stage,
+     *   15 = generic,       17 = concert hall,
+     *   18 = spring/club,   21 = vocal plate,
+     *   23 = room,          24 = bathroom,
+     *   28 = underpass
      */
     set_pattern(pattern: number, rsize: number): void;
     /**
@@ -85,6 +91,11 @@ export interface InitOutput {
     readonly fdnreverb_set_q: (a: number, b: number) => void;
     readonly fdnreverb_set_rshape: (a: number, b: number) => void;
     readonly fdnreverb_set_swidth: (a: number, b: number) => void;
+    readonly __wbg_earlyreflections_free: (a: number, b: number) => void;
+    readonly earlyreflections_new: (a: number) => number;
+    readonly earlyreflections_process_block: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
+    readonly earlyreflections_set_pattern: (a: number, b: number, c: number) => void;
+    readonly earlyreflections_set_sdelay: (a: number, b: number) => void;
     readonly __wbg_spatialenhancer_free: (a: number, b: number) => void;
     readonly spatialenhancer_new: (a: number) => number;
     readonly spatialenhancer_process_block: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
@@ -92,11 +103,6 @@ export interface InitOutput {
     readonly spatialenhancer_set_presence: (a: number, b: number) => void;
     readonly spatialenhancer_set_sshaper: (a: number, b: number, c: number) => void;
     readonly spatialenhancer_set_stereoizer: (a: number, b: number) => void;
-    readonly __wbg_earlyreflections_free: (a: number, b: number) => void;
-    readonly earlyreflections_new: (a: number) => number;
-    readonly earlyreflections_process_block: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
-    readonly earlyreflections_set_pattern: (a: number, b: number, c: number) => void;
-    readonly earlyreflections_set_sdelay: (a: number, b: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
 }
 
