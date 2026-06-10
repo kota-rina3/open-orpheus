@@ -380,7 +380,7 @@ registerCallHandler<MenuRequest, void>(
       (await settings.kv.get("tray.clickBehavior")) === "always-show-menu";
     for (let i = 0; i < parsedMenuData.content.length; i++) {
       const item = parsedMenuData.content[i];
-      // Inject "Manage Open Orpheus" menu item before "Settings" menu item
+      // Inject "Manage Open Orpheus" menu item after "Settings" menu item
       if (
         platform !== "linux" &&
         item.image_path &&
