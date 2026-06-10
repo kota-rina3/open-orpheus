@@ -63,6 +63,8 @@ interface RotateParams {
 
 // #region AudioEffectProcessor
 
+const RVB_WET_MAKEUP_GAIN = dbToGain(14);
+
 class AudioEffectProcessor extends AudioWorkletProcessor {
   // WASM DSP instances
   private fdn: FdnReverb | null = null;
@@ -338,8 +340,8 @@ class AudioEffectProcessor extends AudioWorkletProcessor {
 
     // #region Mix dry + wet
     for (let i = 0; i < n; i++) {
-      outL[i] = outL[i] * this.dryGain + this.wetBufL[i];
-      outR[i] = outR[i] * this.dryGain + this.wetBufR[i];
+      outL[i] = outL[i] * this.dryGain + this.wetBufL[i] * RVB_WET_MAKEUP_GAIN;
+      outR[i] = outR[i] * this.dryGain + this.wetBufR[i] * RVB_WET_MAKEUP_GAIN;
     }
 
     // #endregion

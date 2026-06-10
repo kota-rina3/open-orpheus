@@ -218,6 +218,7 @@ export default class AudioEffectManager {
         numberOfOutputs: 1,
         channelCount: 2,
         channelCountMode: "explicit",
+        outputChannelCount: [2],
         processorOptions: { wasmModule },
       });
 
