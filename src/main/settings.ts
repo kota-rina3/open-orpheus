@@ -2,6 +2,7 @@
 const KV_ENTRIES: Record<string, unknown> = {
   "audio.currentDevice": undefined,
   "desktopLyrics.interpolatedLyricLine": true,
+  "desktopLyrics.opacity": 1,
   "tray.clickBehavior": "always-show-menu",
   "window.overrideMainWindowSizeLimit": undefined,
   proxy: undefined,

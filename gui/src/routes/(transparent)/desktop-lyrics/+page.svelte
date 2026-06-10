@@ -19,6 +19,7 @@
 
   const api = getBridge<DesktopLyricsContract>("desktopLyrics");
 
+  let opacity = $state(1);
   let lyricStyle = $state<LyricsStyle | null>(null);
 
   let lrcLyrics: Lyrics | null = $state(null);
@@ -71,12 +72,19 @@
   // This component would never be unmounted, events does not need to be removed.
   settings.events.on("change", (e) => {
     const { key, value } = e.data;
-    if (key !== "desktopLyrics.interpolatedLyricLine") return;
-    interpolatedLyricLine = value as boolean;
+    if (key === "desktopLyrics.interpolatedLyricLine") {
+      interpolatedLyricLine = value as boolean;
+    } else if (key === "desktopLyrics.opacity") {
+      opacity = value as number;
+    }
   });
   settings.get("desktopLyrics.interpolatedLyricLine").then((v) => {
     if (v === undefined) return;
     interpolatedLyricLine = v as boolean;
+  });
+  settings.get("desktopLyrics.opacity").then((v) => {
+    if (v === undefined) return;
+    opacity = v as number;
   });
 
   onMount(() => {
@@ -188,6 +196,7 @@
       {slogan}
       {useProgress}
       class={lyricStyle.vertical ? "h-full" : "w-full"}
+      style="opacity: {opacity};"
     />
   </div>
 {/if}
