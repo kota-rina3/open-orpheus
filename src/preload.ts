@@ -4,9 +4,13 @@
 import { contextBridge } from "electron";
 
 import "./preload/channel";
-import "./preload/lyrics";
 
 import "./preload/calls/index";
+
+if (process.argv.includes("--preload-channel=main")) {
+  // Lyrics is only used in main window
+  import("./preload/lyrics");
+}
 
 contextBridge.executeInMainWorld({
   func: () => {

@@ -2,8 +2,12 @@ import "./app";
 import "./os";
 import "./network";
 import "./update";
-import "./audioplayer";
-import "./audioeffect";
-import "./player";
 import "./im";
 import "./nimsys";
+
+if (process.argv.includes("--preload-channel=main")) {
+  // Only main window uses player
+  import("./audioplayer");
+  import("./audioeffect");
+  import("./player");
+}
