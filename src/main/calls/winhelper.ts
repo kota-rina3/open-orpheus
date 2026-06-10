@@ -23,6 +23,7 @@ import AppMenu from "../menu";
 import { registerGlobalShortcut, unregisterGlobalShortcut } from "../shortcuts";
 import * as settings from "../settings";
 import { LifecycleState, setLifecycleState } from "../lifecycle";
+import showManageWindow from "../windows/manage";
 
 function shouldApplyScaleFactor() {
   const de = getDesktopEnvironment();
@@ -373,11 +374,29 @@ registerCallHandler<MenuRequest, void>(
     id = 0; // TODO: id doesn't seem to be id, what it is?
     const menus = getMenus(wnd);
     const parsedMenuData = parseMenuData(data);
+    const platform = os.platform();
     const injectShowMainWindowMenuItem =
-      os.platform() === "linux" &&
+      platform === "linux" &&
       (await settings.kv.get("tray.clickBehavior")) === "always-show-menu";
     for (let i = 0; i < parsedMenuData.content.length; i++) {
       const item = parsedMenuData.content[i];
+      // Inject "Manage Open Orpheus" menu item before "Settings" menu item
+      if (
+        platform !== "linux" &&
+        item.image_path &&
+        item.image_path.indexOf("menu/setting.svg") !== -1
+      ) {
+        parsedMenuData.content.splice(i + 1, 0, {
+          menu: true,
+          separator: false,
+          enable: true,
+          children: null,
+          image_color: "#00000000",
+          menu_id: "openOrpheus.manage",
+          text: "管理 Open Orpheus",
+        });
+        i++; // Skip the injected menu item
+      }
       // Inject show main window menu item if tray.clickBehavior is "always-show-menu"
       if (injectShowMainWindowMenuItem && item.menu_id === "exitApp") {
         parsedMenuData.content.splice(i, 0, {
@@ -393,7 +412,10 @@ registerCallHandler<MenuRequest, void>(
       }
     }
     const onClick = (itemId: string | null) => {
-      if (itemId === "openOrpheus.showMainWindow") {
+      if (itemId === "openOrpheus.manage") {
+        showManageWindow();
+        return;
+      } else if (itemId === "openOrpheus.showMainWindow") {
         event.sender.send("channel.call", "trayicon.onclick");
         return;
       }
