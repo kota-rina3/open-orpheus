@@ -2,6 +2,9 @@ packages:
   - "."
   - "gui/"
   - "modules/*"
+catalog:
+  "@electron/fuses": ^2.1.2
+  keyv: 6.0.0-alpha.3
 allowBuilds:
   electron: true
   electron-winstaller: true
@@ -18,14 +21,12 @@ patchedDependencies:
   keyv@6.0.0-alpha.3: patches/keyv@6.0.0-alpha.3.patch
 blockExoticSubdeps: false
 nodeLinker: hoisted
-# See https://github.com/electron/electron/issues/51619
 overrides:
-  "yauzl@2.10.0": "^3.3.1"
   # Got (cacheable-request) uses Keyv 5, but we are using v6, they are mostly compatible, we are overriding it here, and patch cacheable-request
-  "got>keyv": "$keyv"
-  "cacheable-request>keyv": "$keyv"
+  "got>keyv": "catalog:"
+  "cacheable-request>keyv": "catalog:"
   # Our environment is locked to Node.JS 24+, so there will always be node:sqlite
   "@keyv/sqlite>better-sqlite3": "-"
   "@keyv/sqlite>sqlite3": "-"
   # Safe to upgrade (no actual breaking changes for this project)
-  "@electron-forge/plugin-fuses>@electron/fuses": "$@electron/fuses"
+  "@electron-forge/plugin-fuses>@electron/fuses": "catalog:"

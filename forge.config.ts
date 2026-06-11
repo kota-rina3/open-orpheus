@@ -26,73 +26,79 @@ const config: ForgeConfig = {
     derefSymlinks: true, // TODO: Remove in Electron Forge 8
 
     afterExtract: [
-      async (buildPath, electronVersion, platform, arch, callback) => {
-        if (platform === "mas" || platform === "darwin") {
-          const resourcesPath = resolve(
-            buildPath,
-            "Electron.app/Contents/Resources"
-          );
-          const frameworkResourcesPath = resolve(
-            buildPath,
-            "Electron.app/Contents/Frameworks/Electron Framework.framework/Resources"
-          );
+      (buildPath, electronVersion, platform, arch, callback) => {
+        (async () => {
+          if (platform === "mas" || platform === "darwin") {
+            const resourcesPath = resolve(
+              buildPath,
+              "Electron.app/Contents/Resources"
+            );
+            const frameworkResourcesPath = resolve(
+              buildPath,
+              "Electron.app/Contents/Frameworks/Electron Framework.framework/Resources"
+            );
 
-          const resources = await readdir(resourcesPath, {
-            withFileTypes: true,
-          });
-          const frameworkResources = await readdir(frameworkResourcesPath, {
-            withFileTypes: true,
-          });
+            const resources = await readdir(resourcesPath, {
+              withFileTypes: true,
+            });
+            const frameworkResources = await readdir(frameworkResourcesPath, {
+              withFileTypes: true,
+            });
+            await Promise.all(
+              [...resources, ...frameworkResources].map(async (locale) => {
+                if (!locale.isDirectory() || !locale.name.endsWith(".lproj"))
+                  return;
+                if (
+                  LOCALES.some((v) =>
+                    locale.name.replace("_", "-").startsWith(v)
+                  )
+                )
+                  return;
+                await rm(resolve(locale.parentPath, locale.name), {
+                  recursive: true,
+                });
+              })
+            );
+
+            return;
+          }
+          const localesPath = resolve(buildPath, "locales");
+
+          const locales = await readdir(localesPath, { withFileTypes: true });
           await Promise.all(
-            [...resources, ...frameworkResources].map(async (locale) => {
-              if (!locale.isDirectory() || !locale.name.endsWith(".lproj"))
-                return;
+            locales.map(async (locale) => {
+              if (!locale.isFile()) return;
               if (
-                LOCALES.some((v) => locale.name.replace("_", "-").startsWith(v))
+                LOCALES.includes(
+                  locale.name
+                    .substring(0, locale.name.length - 4)
+                    .replace("_", "-")
+                )
               )
                 return;
-              await rm(resolve(locale.parentPath, locale.name), {
-                recursive: true,
-              });
+              await rm(resolve(locale.parentPath, locale.name));
             })
           );
-
-          callback();
-          return;
-        }
-        const localesPath = resolve(buildPath, "locales");
-
-        const locales = await readdir(localesPath, { withFileTypes: true });
-        await Promise.all(
-          locales.map(async (locale) => {
-            if (!locale.isFile()) return;
-            if (
-              LOCALES.includes(
-                locale.name
-                  .substring(0, locale.name.length - 4)
-                  .replace("_", "-")
-              )
-            )
-              return;
-            await rm(resolve(locale.parentPath, locale.name));
-          })
-        );
-
-        callback();
+        })()
+          .then(() => callback())
+          .catch((err) => callback(new Error(String(err))));
       },
       // Extract LICENSES.chromium.html to a separate directory when
       // EXTRACT_LICENSES_TO is set, then remove it from the build.
-      async (buildPath, _electronVersion, platform, _arch, callback) => {
-        const destDir = process.env.EXTRACT_LICENSES_TO;
-        if (destDir) {
-          platform = platform === "mas" ? "darwin" : platform;
-          const src = resolve(buildPath, "LICENSES.chromium.html");
-          const dest = resolve(destDir, `LICENSES.chromium.${platform}.html`);
-          await mkdir(dirname(dest), { recursive: true });
-          await copyFile(src, dest);
-          await rm(src);
-        }
-        callback();
+      (buildPath, _electronVersion, platform, _arch, callback) => {
+        (async () => {
+          const destDir = process.env.EXTRACT_LICENSES_TO;
+          if (destDir) {
+            platform = platform === "mas" ? "darwin" : platform;
+            const src = resolve(buildPath, "LICENSES.chromium.html");
+            const dest = resolve(destDir, `LICENSES.chromium.${platform}.html`);
+            await mkdir(dirname(dest), { recursive: true });
+            await copyFile(src, dest);
+            await rm(src);
+          }
+        })()
+          .then(() => callback())
+          .catch((err) => callback(new Error(String(err))));
       },
     ],
 
