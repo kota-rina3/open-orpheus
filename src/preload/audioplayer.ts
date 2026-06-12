@@ -2,6 +2,9 @@ import { ipcRenderer } from "electron";
 import { fireNativeCall } from "./channel";
 import Player, { AudioPlayerState } from "./Player";
 
+const PLAYING_EVENTS = ["play", "playing"];
+const HALTED_EVENTS = ["pause", "stalled", "ended", "error"];
+
 export const player = new Player();
 
 ipcRenderer.invoke("audio.getDevice").then((deviceId) => {
@@ -130,17 +133,14 @@ function startProgressRaf() {
   rafId = requestAnimationFrame(loop);
 }
 function stopProgressRaf() {
-  if (rafId !== null) {
-    cancelAnimationFrame(rafId);
-    rafId = null;
-  }
+  if (rafId === null) return;
+  cancelAnimationFrame(rafId);
+  rafId = null;
 }
-["play", "playing"].forEach((e) =>
+PLAYING_EVENTS.forEach((e) =>
   player.audio.addEventListener(e, startProgressRaf)
 );
-["pause", "stalled", "ended", "error"].forEach((e) =>
-  player.audio.addEventListener(e, stopProgressRaf)
-);
+HALTED_EVENTS.forEach((e) => player.audio.addEventListener(e, stopProgressRaf));
 ipcRenderer.on("audio.onProgress", (event, progress) => {
   bufferProgress = progress;
   onPlayProgress();
@@ -155,11 +155,48 @@ player.on("audiodata", (event) => {
   fireNativeCall("audioplayer.onAudioData", { data, pts });
 });
 
+function updatePositionState() {
+  navigator.mediaSession.setPositionState({
+    duration: player.audio.duration,
+    position: player.audio.currentTime,
+    playbackRate: player.audio.playbackRate,
+  });
+}
+
+navigator.mediaSession.playbackState = "paused";
+
+PLAYING_EVENTS.forEach((e) =>
+  player.audio.addEventListener(e, () => {
+    navigator.mediaSession.playbackState = "playing";
+    updatePositionState();
+  })
+);
+[...HALTED_EVENTS, "seeking"].forEach((e) =>
+  player.audio.addEventListener(e, () => {
+    navigator.mediaSession.playbackState = "paused";
+    updatePositionState();
+  })
+);
+
+player.audio.addEventListener("seeked", updatePositionState);
+
 navigator.mediaSession.setActionHandler("nexttrack", () => {
   fireNativeCall("winhelper.onHotkey", "next_1", true);
 });
 navigator.mediaSession.setActionHandler("previoustrack", () => {
   fireNativeCall("winhelper.onHotkey", "prev_1", true);
+});
+navigator.mediaSession.setActionHandler("seekto", ({ seekTime }) => {
+  if (isNaN(Number(seekTime))) return;
+  player.audio.currentTime = seekTime as number;
+});
+navigator.mediaSession.setActionHandler("seekforward", ({ seekOffset }) => {
+  if (isNaN(Number(seekOffset))) return;
+  player.audio.currentTime += seekOffset as number;
+});
+navigator.mediaSession.setActionHandler("seekbackward", ({ seekOffset }) => {
+  if (isNaN(Number(seekOffset))) return;
+  player.audio.currentTime -= seekOffset as number;
 });
 navigator.mediaSession.setActionHandler("stop", () => {
   fireNativeCall("winhelper.onHotkey", "stop", true);
