@@ -37,9 +37,7 @@ import createCacheManager, {
   playCacheManager,
 } from "../cache";
 import { toError } from "../../util";
-import { deData, enData, ID3_AES_KEY } from "../crypto";
-
-const ID3_COMMENT_PREFIX = "163 key(Don't modify):";
+import { commentToID3Json, ID3JsonToComment } from "../id3";
 
 type DownloadScannerItem = {
   comment: string; // comment added by addid3
@@ -58,19 +56,14 @@ async function readDownloadedMusicInfo(
   let comment = "";
   try {
     const tagger = new MusicTagger();
+
     tagger.loadPath(filePath);
-    if (!tagger.comment || !tagger.comment.startsWith(ID3_COMMENT_PREFIX)) {
-      tagger.dispose();
-      return;
-    }
-    const decryptedComment = deData(
-      tagger.comment.slice(ID3_COMMENT_PREFIX.length),
-      ID3_AES_KEY,
-      false
-    );
+    const json = commentToID3Json(tagger.comment);
     tagger.dispose();
-    if (!decryptedComment) return;
-    comment = decryptedComment ? decryptedComment.toString("utf-8") : "";
+
+    if (!json) return;
+
+    comment = json;
   } catch (error) {
     console.error(`Error reading ID3 tags from ${filePath}:`, error);
   }
@@ -532,7 +525,7 @@ registerCallHandler<[string, string, string, string, AddId3Request], void>(
         }
       }
 
-      tagger.comment = `${ID3_COMMENT_PREFIX}${enData(mediaInfo, ID3_AES_KEY, false)}`;
+      tagger.comment = ID3JsonToComment(mediaInfo);
 
       let relPath = id3Info.media_rel_path;
       if (relPath.endsWith(".ncm")) {
