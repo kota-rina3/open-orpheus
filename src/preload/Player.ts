@@ -195,6 +195,14 @@ export default class Player extends Emittery<PlayerEvents> {
   constructor() {
     super();
 
+    this._audioCtx.addEventListener("statechange", () => {
+      if (this._audioCtx.state !== "running") {
+        // Audio context somehow stopped, ensure we handle this cleanly by
+        // firing pause event of audio
+        this._audio.pause();
+      }
+    });
+
     this._audio.crossOrigin = "anonymous";
     this._audio.volume = 1;
 
@@ -242,6 +250,14 @@ export default class Player extends Emittery<PlayerEvents> {
     });
   }
 
+  private async ensureAudioContextState(running = true) {
+    if (running && this._audioCtx.state !== "running") {
+      await this._audioCtx.resume();
+    } else if (!running && this._audioCtx.state === "running") {
+      await this._audioCtx.suspend();
+    }
+  }
+
   setAudioEffectEnabled(enabled: boolean) {
     if (enabled) {
       try {
@@ -275,19 +291,6 @@ export default class Player extends Emittery<PlayerEvents> {
     return this._audio;
   }
 
-  stop() {
-    this._audio.pause();
-    this._audio.currentTime = 0;
-    this._audio.src = "";
-    this._playInfo = null;
-    // Simply try, does nothing if failed.
-    this._honeyPotPromise
-      .then((node) => {
-        node.port.postMessage("reset");
-      })
-      .catch(() => {});
-  }
-
   async setAudioDataEnabled(enabled: boolean) {
     const node = await this._honeyPotPromise;
     if (enabled) {
@@ -302,5 +305,27 @@ export default class Player extends Emittery<PlayerEvents> {
         throw err;
       }
     }
+  }
+
+  async play() {
+    await this.ensureAudioContextState();
+    return await this._audio.play();
+  }
+
+  pause() {
+    this._audio.pause();
+  }
+
+  stop() {
+    this._audio.pause();
+    this._audio.currentTime = 0;
+    this._audio.src = "";
+    this._playInfo = null;
+    // Simply try, does nothing if failed.
+    this._honeyPotPromise
+      .then((node) => {
+        node.port.postMessage("reset");
+      })
+      .catch(() => {});
   }
 }

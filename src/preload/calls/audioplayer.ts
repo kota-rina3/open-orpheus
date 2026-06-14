@@ -21,12 +21,12 @@ registerCallHandler<[AudioPlayInfo], void>(
 
 registerCallHandler<[string], void>("audioplayer.play", async (id) => {
   if (player.currentId !== id) return;
-  await player.audio.play();
+  await player.play();
 });
 
 registerCallHandler<[string, string], void>("audioplayer.pause", (id) => {
   if (player.currentId !== id) return;
-  player.audio.pause();
+  player.pause();
 });
 
 registerCallHandler<[string], void>("audioplayer.stop", (id) => {
