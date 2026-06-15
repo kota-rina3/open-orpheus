@@ -256,18 +256,69 @@ registerCallHandler<[MusicLibraries, number], [boolean]>(
         }
         const db = getMusicLibraryDb();
 
+        const existingResult = db.exec(
+          "SELECT file, filesize, timestamp FROM track WHERE dir = ?",
+          [library]
+        );
+        const existingRows: Array<Record<string, string>> =
+          existingResult[1] ?? [];
+        const existingMap = new Map<
+          string,
+          { filesize: number; timestamp: number }
+        >();
+        for (const row of existingRows) {
+          existingMap.set(row.file, {
+            filesize: Number(row.filesize),
+            timestamp: Number(row.timestamp),
+          });
+        }
+
         const entries = await readdir(libPath, { recursive: true });
+        let processed = 0;
+
         for (const relative of entries) {
           if (!isMusicFile(relative)) continue;
           try {
             const filePath = path.resolve(libPath, relative);
-            const entry = await trackEntryFromFile(library, filePath);
-            db.exec("DELETE FROM track WHERE file = ?", [filePath]);
-            db.execNamed(
-              `INSERT INTO track (file, tid, aid, dir, title, album, genre, artist, duration, timestamp, bitrate, filesize, ignored, id, artistid, parentdir, track, librarypath, tracknumber, source, starttime, type)
+
+            const existing = existingMap.get(filePath);
+            let needsUpdate = !existing; // new file, always index
+
+            if (existing) {
+              // File exists on disk — remove from map so we can detect stale entries later
+              existingMap.delete(filePath);
+
+              // Check metadata only: file size + last modify time vs stored timestamp
+              const fstat = await stat(filePath);
+              if (
+                fstat.size !== existing.filesize ||
+                fstat.mtimeMs > existing.timestamp
+              ) {
+                needsUpdate = true;
+              }
+            }
+
+            if (needsUpdate) {
+              const entry = await trackEntryFromFile(library, filePath);
+              db.exec("DELETE FROM track WHERE file = ?", [filePath]);
+              db.execNamed(
+                `INSERT INTO track (file, tid, aid, dir, title, album, genre, artist, duration, timestamp, bitrate, filesize, ignored, id, artistid, parentdir, track, librarypath, tracknumber, source, starttime, type)
               VALUES (:file, :tid, :aid, :dir, :title, :album, :genre, :artist, :duration, :timestamp, :bitrate, :filesize, :ignored, :id, :artistid, :parentdir, :track, :librarypath, :tracknumber, :source, :starttime, :type)`,
-              entry
-            );
+                entry
+              );
+            }
+
+            processed++;
+
+            // Progress update every 10 entries
+            if (processed % 10 === 0) {
+              event.sender.send(
+                "channel.call",
+                "musiclibrary.onaddprogress",
+                library,
+                processed
+              );
+            }
           } catch (err) {
             console.error(
               "Failed to read music",
@@ -277,6 +328,12 @@ registerCallHandler<[MusicLibraries, number], [boolean]>(
               err
             );
           }
+        }
+
+        // If there are still files in the map, they are stale (in the db but not filesystem),
+        // remove them here
+        for (const staleFile of existingMap.keys()) {
+          db.exec("DELETE FROM track WHERE file = ?", [staleFile]);
         }
 
         event.sender.send("channel.call", "musiclibrary.onaddend", {
