@@ -66,6 +66,7 @@ export function commentToID3Metadata(
   const json = commentToID3Json(comment);
   if (!json) return null;
   try {
+    if (!json.startsWith("music:")) return null;
     return JSON.parse(json.substring("music:".length));
   } catch {
     return null;
