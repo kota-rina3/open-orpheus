@@ -11,10 +11,10 @@ const pathToWebDb = join(data, "webdb.dat");
 const pathToMusicLibrary = join(data, "library.dat");
 const pathToNativeDb = join(data, "openorpheus.db");
 
-let webDb: Database;
-let musicLibraryDb: Database;
-let nativeDb: DatabaseSync;
-let nativeDbKvDriver: KeyvSqlite;
+export let webDb: Database;
+export let musicLibraryDb: Database;
+export let nativeDb: DatabaseSync;
+export let nativeDbKvDriver: KeyvSqlite;
 
 export function initializeDatabases() {
   webDb = new Database(pathToWebDb);
@@ -61,20 +61,4 @@ export function initializeDatabases() {
   nativeDb.exec("PRAGMA synchronous = FULL;");
 
   nativeDbKvDriver = new KeyvSqlite({ driver: getKeyvDriver(nativeDb) });
-}
-
-export function getWebDb() {
-  return webDb;
-}
-
-export function getMusicLibraryDb() {
-  return musicLibraryDb;
-}
-
-export function getNativeDb() {
-  return nativeDb;
-}
-
-export function getNativeDbKvDriver() {
-  return nativeDbKvDriver;
 }

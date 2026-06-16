@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { app } from "electron";
 import { MusicTagger } from "music-tag-native";
 
-import { getMusicLibraryDb } from "../database";
+import { musicLibraryDb } from "../database";
 import { registerCallHandler } from "../calls";
 import { isMusicFile, normalizePath } from "../util";
 import { toError } from "../../util";
@@ -164,7 +164,7 @@ registerCallHandler<[string, string[]], [boolean]>(
   "musiclibrary.execSql",
   async (event, taskId, sql) => {
     try {
-      const result = getMusicLibraryDb().executeSqls(sql);
+      const result = musicLibraryDb.executeSqls(sql);
       event.sender.send("channel.call", "musiclibrary.onexecsql", {
         error: 0,
         id: taskId,
@@ -200,7 +200,7 @@ registerCallHandler<[MusicLibraries], void>(
         if (!filename) return;
         if (!isMusicFile(filename)) return;
         const filePath = path.resolve(libPath, filename);
-        const db = getMusicLibraryDb();
+        const db = musicLibraryDb;
         db.exec("DELETE FROM track WHERE file = ?", [filePath]);
         if (existsSync(filePath)) {
           try {
@@ -254,7 +254,7 @@ registerCallHandler<[MusicLibraries, number], [boolean]>(
           });
           return;
         }
-        const db = getMusicLibraryDb();
+        const db = musicLibraryDb;
 
         const existingResult = db.exec(
           "SELECT file, filesize, timestamp FROM track WHERE dir = ?",
@@ -362,7 +362,7 @@ registerCallHandler<[string], [boolean]>(
   (event, library) => {
     (async () => {
       try {
-        const db = getMusicLibraryDb();
+        const db = musicLibraryDb;
         db.exec("DELETE FROM track WHERE dir = ?", [library]);
       } catch (err) {
         console.error("Failed to delete tracks from lib", library, err);

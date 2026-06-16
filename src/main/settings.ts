@@ -12,13 +12,13 @@ import Emittery from "emittery";
 import { Keyv, KeyvHooks } from "keyv";
 
 import { SettingsEvents } from "$sharedTypes/settings";
-import { getNativeDbKvDriver } from "./database";
+import { nativeDbKvDriver } from "./database";
 
 export let kv: Keyv;
 export let events: Emittery<SettingsEvents>;
 
 export function initialize() {
-  kv = new Keyv({ namespace: "settings", store: getNativeDbKvDriver() });
+  kv = new Keyv({ namespace: "settings", store: nativeDbKvDriver });
 
   const get = kv.get.bind(kv);
   kv.get = async (keyOrKeys, ...args: undefined[]) => {

@@ -26,7 +26,7 @@ import {
 } from "../folders";
 import { registerCallHandler } from "../calls";
 import { isMusicFile, normalizePath, sanitizeRelativePath } from "../util";
-import { getWebDb } from "../database";
+import { webDb } from "../database";
 import {
   CacheTrackMeta,
   type PlayCacheConfig,
@@ -142,7 +142,7 @@ registerCallHandler<[string, string], void>(
   "storage.execsql",
   async (event, taskId, sql) => {
     try {
-      const execResult = getWebDb().executeSql(sql);
+      const execResult = webDb.executeSql(sql);
       event.sender.send(
         "channel.call",
         "storage.onexecsqldone",
@@ -167,7 +167,7 @@ registerCallHandler<[string, string], void>(
   "storage.exectransaction",
   async (event, taskId, sql) => {
     try {
-      const execResult = getWebDb().executeTransaction(sql);
+      const execResult = webDb.executeTransaction(sql);
       event.sender.send(
         "channel.call",
         "storage.onexecsqldone",
