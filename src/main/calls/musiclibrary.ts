@@ -361,8 +361,12 @@ registerCallHandler<[string], [boolean]>(
   "musiclibrary.removeLibrary",
   (event, library) => {
     (async () => {
-      const db = getMusicLibraryDb();
-      db.exec("DELETE FROM track WHERE dir = ?", [library]);
+      try {
+        const db = getMusicLibraryDb();
+        db.exec("DELETE FROM track WHERE dir = ?", [library]);
+      } catch (err) {
+        console.error("Failed to delete tracks from lib", library, err);
+      }
       event.sender.send(
         "channel.call",
         "musiclibrary.onremovelibrary",
