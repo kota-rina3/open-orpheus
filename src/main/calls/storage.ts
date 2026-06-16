@@ -53,7 +53,7 @@ async function readDownloadedMusicInfo(
   base: string | undefined = undefined
 ): Promise<DownloadScannerItem | undefined> {
   const filePath = normalizePath(base ?? "", file);
-  let comment = "";
+  let comment;
   try {
     const content = await readFile(filePath);
 
@@ -68,6 +68,7 @@ async function readDownloadedMusicInfo(
     comment = json;
   } catch (error) {
     console.error(`Error reading ID3 tags from ${filePath}:`, error);
+    return;
   }
   const statResult = await stat(filePath);
   return {
