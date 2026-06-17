@@ -14,9 +14,50 @@
 ## 功能
 
 - 跨平台支持
+  - 优秀的原生 Wayland 支持
+  - X11
+  - macOS
+  - Windows
 - 开源
 
 不然你还想要啥！它本质上就是给原版客户端提供一个运行环境！
+
+## 截图
+
+<details>
+<summary>主界面</summary>
+
+![主界面](assets/screenshots/1.png)
+
+</details>
+
+<details>
+<summary>播放界面</summary>
+
+![播放界面](assets/screenshots/2.png)
+
+</details>
+
+<details>
+<summary>设置界面</summary>
+
+![设置界面](assets/screenshots/3.png)
+
+</details>
+
+<details>
+<summary>迷你播放器和桌面歌词</summary>
+
+![迷你播放器和桌面歌词](assets/screenshots/4.png)
+
+</details>
+
+<details>
+<summary>迷你播放器列表</summary>
+
+![迷你播放器列表](assets/screenshots/5.png)
+
+</details>
 
 ## 安装
 

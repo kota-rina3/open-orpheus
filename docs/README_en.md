@@ -12,9 +12,50 @@ Track the project's current dev plans at https://github.com/users/YUCLing/projec
 ## Features
 
 - Cross-platform support
+  - Excellent native Wayland support
+  - X11
+  - macOS
+  - Windows
 - Open-source
 
-What else do you expect! It just provides a environment for the original client!
+What else do you expect! It just provides an environment for the original client!
+
+## Screenshots
+
+<details>
+<summary>Main Interface</summary>
+
+![Main Interface](../assets/screenshots/1.png)
+
+</details>
+
+<details>
+<summary>Playback Interface</summary>
+
+![Playback Interface](../assets/screenshots/2.png)
+
+</details>
+
+<details>
+<summary>Settings Interface</summary>
+
+![Settings Interface](../assets/screenshots/3.png)
+
+</details>
+
+<details>
+<summary>Mini Player & Desktop Lyrics</summary>
+
+![Mini Player & Desktop Lyrics](../assets/screenshots/4.png)
+
+</details>
+
+<details>
+<summary>Mini Player List</summary>
+
+![Mini Player List](../assets/screenshots/5.png)
+
+</details>
 
 ## Installation
 
