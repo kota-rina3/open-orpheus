@@ -5,6 +5,7 @@ import os from "node:os";
 import { BrowserWindow, screen } from "electron";
 import photon from "@silvia-odwyer/photon-node";
 import mime from "mime";
+import { MetaPicture } from "music-tag-native";
 
 export function pngFromIco(icoData: Uint8Array): Uint8Array {
   const icoImage = photon.PhotonImage.new_from_byteslice(icoData);
@@ -62,4 +63,16 @@ export async function calculateDbSize(db: string): Promise<number> {
   ]);
 
   return sizeBytes;
+}
+
+export function selectBestMusicPic(pics: MetaPicture[]): MetaPicture | null {
+  if (pics.length === 0) return null;
+  let pic: MetaPicture | null = null;
+  for (const p of pics) {
+    // Use CoverFront directly
+    if (p.coverType === "CoverFront") return p;
+    // Use the first found if no CoverFront
+    if (pic === null) pic = p;
+  }
+  return pic;
 }

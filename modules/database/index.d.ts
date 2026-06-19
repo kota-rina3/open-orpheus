@@ -3,22 +3,22 @@
 export declare class Database {
   constructor(path: string)
   /** Execute a single SQL statement with named parameters. */
-  execNamed(sql: string, parameters: Record<string, unknown>): [number, Record<string, string>]
+  execNamed(sql: string, parameters: Record<string, unknown>): [number, Record<string, string>[]]
   /** Execute a single SQL statement with positional (`?`) parameters. */
-  exec(sql: string, parameters: unknown[]): [number, Record<string, string>]
+  exec(sql: string, parameters: unknown[]): [number, Record<string, string>[]]
   /**
    * Execute SQL string, returns an array of objects representing rows,
    * and an array of performance info (total time, execution time, rows affected).
    *
    * For NCM, not intended for Open Orpheus.
    */
-  executeSql(sql: string): [number, Record<string, string>, [number, number, number]]
+  executeSql(sql: string): [number, Record<string, string>[], [number, number, number]]
   /**
    * Execute a SQL contains multiple statements as one transaction.
    *
    * For NCM, not intended for Open Orpheus.
    */
-  executeTransaction(sql: string): [number, Record<string, string>, [number, number, number]]
+  executeTransaction(sql: string): [number, Record<string, string>[], [number, number, number]]
   /**
    *  Execute multiple SQL statements inside an array, returns values of the last statement as an array.
    *

@@ -26,7 +26,7 @@ import {
 } from "../folders";
 import { registerCallHandler } from "../calls";
 import { isMusicFile, normalizePath, sanitizeRelativePath } from "../util";
-import { getWebDb } from "../database";
+import { webDb } from "../database";
 import {
   CacheTrackMeta,
   type PlayCacheConfig,
@@ -37,9 +37,7 @@ import createCacheManager, {
   playCacheManager,
 } from "../cache";
 import { toError } from "../../util";
-import { deData, enData, ID3_AES_KEY } from "../crypto";
-
-const ID3_COMMENT_PREFIX = "163 key(Don't modify):";
+import { commentToID3Json, ID3JsonToComment } from "../id3";
 
 type DownloadScannerItem = {
   comment: string; // comment added by addid3
@@ -55,24 +53,22 @@ async function readDownloadedMusicInfo(
   base: string | undefined = undefined
 ): Promise<DownloadScannerItem | undefined> {
   const filePath = normalizePath(base ?? "", file);
-  let comment = "";
+  let comment;
   try {
+    const content = await readFile(filePath);
+
     const tagger = new MusicTagger();
-    tagger.loadPath(filePath);
-    if (!tagger.comment || !tagger.comment.startsWith(ID3_COMMENT_PREFIX)) {
-      tagger.dispose();
-      return;
-    }
-    const decryptedComment = deData(
-      tagger.comment.slice(ID3_COMMENT_PREFIX.length),
-      ID3_AES_KEY,
-      false
-    );
+
+    tagger.loadBuffer(content);
+    const json = commentToID3Json(tagger.comment);
     tagger.dispose();
-    if (!decryptedComment) return;
-    comment = decryptedComment ? decryptedComment.toString("utf-8") : "";
+
+    if (!json) return;
+
+    comment = json;
   } catch (error) {
     console.error(`Error reading ID3 tags from ${filePath}:`, error);
+    return;
   }
   const statResult = await stat(filePath);
   return {
@@ -146,7 +142,7 @@ registerCallHandler<[string, string], void>(
   "storage.execsql",
   async (event, taskId, sql) => {
     try {
-      const execResult = getWebDb().executeSql(sql);
+      const execResult = webDb.executeSql(sql);
       event.sender.send(
         "channel.call",
         "storage.onexecsqldone",
@@ -171,7 +167,7 @@ registerCallHandler<[string, string], void>(
   "storage.exectransaction",
   async (event, taskId, sql) => {
     try {
-      const execResult = getWebDb().executeTransaction(sql);
+      const execResult = webDb.executeTransaction(sql);
       event.sender.send(
         "channel.call",
         "storage.onexecsqldone",
@@ -532,7 +528,7 @@ registerCallHandler<[string, string, string, string, AddId3Request], void>(
         }
       }
 
-      tagger.comment = `${ID3_COMMENT_PREFIX}${enData(mediaInfo, ID3_AES_KEY, false)}`;
+      tagger.comment = ID3JsonToComment(mediaInfo);
 
       let relPath = id3Info.media_rel_path;
       if (relPath.endsWith(".ncm")) {

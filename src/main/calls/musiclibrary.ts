@@ -1,15 +1,16 @@
 import { existsSync, watch, type FSWatcher } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import path, { basename } from "node:path";
 import { createHash } from "node:crypto";
 
 import { app } from "electron";
 import { MusicTagger } from "music-tag-native";
 
-import { getMusicLibraryDb } from "../database";
+import { musicLibraryDb } from "../database";
 import { registerCallHandler } from "../calls";
 import { isMusicFile, normalizePath } from "../util";
 import { toError } from "../../util";
+import { commentToID3Metadata } from "../id3";
 
 type MusicLibraries =
   | "<mymusic>"
@@ -44,16 +45,20 @@ type TrackEntry = {
 };
 
 function getLibraryPath(library: MusicLibraries): string | null {
-  switch (library) {
-    case "<mymusic>":
-      return app.getPath("music");
-    case "<download>":
-      return app.getPath("downloads");
-    case "<windowsmedia>":
-    case "<itunes>":
-      return null;
-    default:
-      return normalizePath(library);
+  try {
+    switch (library) {
+      case "<mymusic>":
+        return app.getPath("music");
+      case "<download>":
+        return app.getPath("downloads");
+      case "<windowsmedia>":
+      case "<itunes>":
+        return null;
+      default:
+        return normalizePath(library);
+    }
+  } catch {
+    return null;
   }
 }
 
@@ -68,25 +73,75 @@ async function trackEntryFromFile(
   lib: string,
   file: string
 ): Promise<TrackEntry> {
-  const fstat = await stat(file);
+  const [fstat, content] = await Promise.all([stat(file), readFile(file)]);
+  const extName = path.extname(file);
 
   const tagger = new MusicTagger();
-  tagger.loadPath(file);
+  tagger.loadBuffer(content);
 
-  const title = tagger.title || path.basename(file, path.extname(file));
-  const album = tagger.album || "";
+  let title = tagger.title || path.basename(file, extName);
+  let album = tagger.album || "";
   const genre = tagger.genre || "";
-  const artist = tagger.artist || "";
-  const duration = tagger.duration || 0;
-  const bitrate = tagger.bitRate || 0;
-  const tracknumber = tagger.trackNumber || 0;
+  let artist = tagger.artist || "";
+  let duration = tagger.duration || 0;
+  let bitrate = tagger.bitRate || 0;
+  const tracknumber = tagger.trackNumber || 10000;
+
+  let tid = "";
+  let aid = "";
+  let artistid = "";
+  let track = "";
+
+  const metadata = commentToID3Metadata(tagger.comment);
+  if (metadata) {
+    tid = metadata.musicId;
+    aid = `album${metadata.albumId}`;
+    title = metadata.musicName;
+    album = metadata.album;
+    duration = metadata.duration;
+    bitrate = metadata.bitrate / 1000;
+    artist = "";
+
+    const artists = [];
+
+    for (const item of metadata.artist) {
+      artist += `${item[0]},`;
+      artistid += `${item[1]},`;
+      artists.push({
+        name: item[0],
+        id: item[1],
+      });
+    }
+
+    track = JSON.stringify({
+      id: metadata.musicId,
+      name: metadata.musicName,
+      alias: metadata.alias,
+      transNames: metadata.transNames,
+      artists,
+      album: {
+        id: metadata.albumId,
+        name: metadata.album,
+        picId: metadata.albumPicDocId,
+        picUrl: metadata.albumPic,
+      },
+      duration: metadata.duration,
+      mvId: metadata.mvId,
+      realSuffix: extName.substring(1),
+      commentThreadId: "",
+      bitrate: metadata.bitrate,
+      volumeDelta: metadata.volumeDelta,
+      privilege: metadata.privilege,
+      fee: metadata.fee,
+    });
+  }
 
   tagger.dispose();
 
   return {
     file,
-    tid: "",
-    aid: "",
+    tid,
+    aid,
     dir: lib,
     title,
     album,
@@ -98,9 +153,9 @@ async function trackEntryFromFile(
     filesize: fstat.size,
     ignored: 0,
     id: generateTrackId(file),
-    artistid: "",
+    artistid,
     parentdir: path.dirname(file),
-    track: "",
+    track,
     librarypath: getLibraryPath(lib) || "",
     tracknumber,
     source: "",
@@ -113,7 +168,7 @@ registerCallHandler<[string, string[]], [boolean]>(
   "musiclibrary.execSql",
   async (event, taskId, sql) => {
     try {
-      const result = getMusicLibraryDb().executeSqls(sql);
+      const result = musicLibraryDb.executeSqls(sql);
       event.sender.send("channel.call", "musiclibrary.onexecsql", {
         error: 0,
         id: taskId,
@@ -148,24 +203,35 @@ registerCallHandler<[MusicLibraries], void>(
       async (eventType, filename) => {
         if (!filename) return;
         if (!isMusicFile(filename)) return;
-        const filePath = path.join(libPath, filename);
-        const db = getMusicLibraryDb();
+        const filePath = path.resolve(libPath, filename);
+        const db = musicLibraryDb;
+        db.exec("DELETE FROM track WHERE file = ?", [filePath]);
         if (existsSync(filePath)) {
-          const entry = await trackEntryFromFile(lib, filePath);
-          db.exec("DELETE FROM track WHERE file = ?", [filePath]);
-          db.execNamed(
-            `INSERT INTO track (file, tid, aid, dir, title, album, genre, artist, duration, timestamp, bitrate, filesize, ignored, id, artistid, parentdir, track, librarypath, tracknumber, source, starttime, type)
-             VALUES (:file, :tid, :aid, :dir, :title, :album, :genre, :artist, :duration, :timestamp, :bitrate, :filesize, :ignored, :id, :artistid, :parentdir, :track, :librarypath, :tracknumber, :source, :starttime, :type)`,
-            entry
-          );
-        } else {
-          db.exec("DELETE FROM track WHERE file = ?", [filePath]);
+          try {
+            const entry = await trackEntryFromFile(lib, filePath);
+            db.execNamed(
+              `INSERT INTO track (file, tid, aid, dir, title, album, genre, artist, duration, timestamp, bitrate, filesize, ignored, id, artistid, parentdir, track, librarypath, tracknumber, source, starttime, type)
+              VALUES (:file, :tid, :aid, :dir, :title, :album, :genre, :artist, :duration, :timestamp, :bitrate, :filesize, :ignored, :id, :artistid, :parentdir, :track, :librarypath, :tracknumber, :source, :starttime, :type)`,
+              entry
+            );
+          } catch (err) {
+            console.error(
+              "Failed to refresh music",
+              filename,
+              "metadata in library",
+              lib,
+              err
+            );
+          }
         }
         event.sender.send("channel.call", "musiclibrary.onobserveLibrary", {
           library: lib,
         });
       }
     );
+    watcher.on("error", (err) => {
+      console.error("Library observer encountered error:", err);
+    });
     libWatchers.set(lib, watcher);
   }
 );
@@ -195,19 +261,86 @@ registerCallHandler<[MusicLibraries, number], [boolean]>(
           });
           return;
         }
-        const db = getMusicLibraryDb();
+        const db = musicLibraryDb;
+
+        const existingResult = db.exec(
+          "SELECT file, filesize, timestamp FROM track WHERE dir = ?",
+          [library]
+        );
+        const existingRows: Array<Record<string, string>> =
+          existingResult[1] ?? [];
+        const existingMap = new Map<
+          string,
+          { filesize: number; timestamp: number }
+        >();
+        for (const row of existingRows) {
+          existingMap.set(row.file, {
+            filesize: Number(row.filesize),
+            timestamp: Number(row.timestamp),
+          });
+        }
 
         const entries = await readdir(libPath, { recursive: true });
+        let processed = 0;
+
         for (const relative of entries) {
           if (!isMusicFile(relative)) continue;
-          const filePath = path.join(libPath, relative);
-          const entry = await trackEntryFromFile(library, filePath);
-          db.exec("DELETE FROM track WHERE file = ?", [filePath]);
-          db.execNamed(
-            `INSERT INTO track (file, tid, aid, dir, title, album, genre, artist, duration, timestamp, bitrate, filesize, ignored, id, artistid, parentdir, track, librarypath, tracknumber, source, starttime, type)
-            VALUES (:file, :tid, :aid, :dir, :title, :album, :genre, :artist, :duration, :timestamp, :bitrate, :filesize, :ignored, :id, :artistid, :parentdir, :track, :librarypath, :tracknumber, :source, :starttime, :type)`,
-            entry
-          );
+          try {
+            const filePath = path.resolve(libPath, relative);
+
+            const existing = existingMap.get(filePath);
+            let needsUpdate = !existing; // new file, always index
+
+            if (existing) {
+              // File exists on disk — remove from map so we can detect stale entries later
+              existingMap.delete(filePath);
+
+              // Check metadata only: file size + last modify time vs stored timestamp
+              const fstat = await stat(filePath);
+              if (
+                fstat.size !== existing.filesize ||
+                fstat.mtimeMs > existing.timestamp
+              ) {
+                needsUpdate = true;
+              }
+            }
+
+            if (needsUpdate) {
+              const entry = await trackEntryFromFile(library, filePath);
+              db.exec("DELETE FROM track WHERE file = ?", [filePath]);
+              db.execNamed(
+                `INSERT INTO track (file, tid, aid, dir, title, album, genre, artist, duration, timestamp, bitrate, filesize, ignored, id, artistid, parentdir, track, librarypath, tracknumber, source, starttime, type)
+              VALUES (:file, :tid, :aid, :dir, :title, :album, :genre, :artist, :duration, :timestamp, :bitrate, :filesize, :ignored, :id, :artistid, :parentdir, :track, :librarypath, :tracknumber, :source, :starttime, :type)`,
+                entry
+              );
+            }
+
+            processed++;
+
+            // Progress update every 10 entries
+            if (processed % 10 === 0) {
+              event.sender.send(
+                "channel.call",
+                "musiclibrary.onaddprogress",
+                library,
+                processed
+              );
+            }
+          } catch (err) {
+            console.error(
+              "Failed to read music",
+              relative,
+              "in library",
+              library,
+              err
+            );
+          }
+        }
+
+        // If there are still files in the map, they are stale (in the db but not filesystem),
+        // remove them here
+        for (const staleFile of existingMap.keys()) {
+          db.exec("DELETE FROM track WHERE file = ?", [staleFile]);
         }
 
         event.sender.send("channel.call", "musiclibrary.onaddend", {
@@ -227,6 +360,26 @@ registerCallHandler<[MusicLibraries, number], [boolean]>(
       }
     })();
 
+    return [true];
+  }
+);
+
+registerCallHandler<[string], [boolean]>(
+  "musiclibrary.removeLibrary",
+  (event, library) => {
+    (async () => {
+      try {
+        const db = musicLibraryDb;
+        db.exec("DELETE FROM track WHERE dir = ?", [library]);
+      } catch (err) {
+        console.error("Failed to delete tracks from lib", library, err);
+      }
+      event.sender.send(
+        "channel.call",
+        "musiclibrary.onremovelibrary",
+        library
+      );
+    })();
     return [true];
   }
 );

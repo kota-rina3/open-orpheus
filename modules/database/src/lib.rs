@@ -35,7 +35,7 @@ impl Database {
     }
 
     /// Execute a single SQL statement with named parameters.
-    #[napi(ts_return_type = "[number, Record<string, string>]")]
+    #[napi(ts_return_type = "[number, Record<string, string>[]]")]
     pub fn exec_named<'env>(
         &self,
         env: &'env Env,
@@ -108,7 +108,7 @@ impl Database {
     }
 
     /// Execute a single SQL statement with positional (`?`) parameters.
-    #[napi(ts_return_type = "[number, Record<string, string>]")]
+    #[napi(ts_return_type = "[number, Record<string, string>[]]")]
     pub fn exec<'env>(
         &self,
         env: &'env Env,
@@ -236,7 +236,7 @@ impl Database {
     /// and an array of performance info (total time, execution time, rows affected).
     ///
     /// For NCM, not intended for Open Orpheus.
-    #[napi(ts_return_type = "[number, Record<string, string>, [number, number, number]]")]
+    #[napi(ts_return_type = "[number, Record<string, string>[], [number, number, number]]")]
     pub fn execute_sql<'env>(&self, env: &'env Env, sql: String) -> Result<Array<'env>> {
         Database::execute_sql_impl(env, &self.conn, sql)
     }
@@ -244,7 +244,7 @@ impl Database {
     /// Execute a SQL contains multiple statements as one transaction.
     ///
     /// For NCM, not intended for Open Orpheus.
-    #[napi(ts_return_type = "[number, Record<string, string>, [number, number, number]]")]
+    #[napi(ts_return_type = "[number, Record<string, string>[], [number, number, number]]")]
     pub fn execute_transaction<'env>(
         &mut self,
         env: &'env Env,
