@@ -15,7 +15,7 @@ registerCallHandler<[string], void>(
   "trayicon.setIcon",
   async (event, iconUrl) => {
     const icon = await loadFromOrpheusUrl(iconUrl);
-    const buf = pngFromIco(icon.content);
+    const buf = pngFromIco(icon.content as unknown as Uint8Array);
     const image = nativeImage.createFromBuffer(Buffer.from(buf));
     setIcon(image);
   }

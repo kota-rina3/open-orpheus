@@ -6,10 +6,15 @@ import { createHash } from "node:crypto";
 import { Protocol } from "electron";
 import mime from "mime";
 import unzipper from "unzipper";
+import { MusicTagger } from "music-tag-native";
 
 import packManager from "./pack";
 import WebPack from "./packs/WebPack";
-import { sanitizeRelativePath } from "./util";
+import {
+  normalizePath,
+  sanitizeRelativePath,
+  selectBestMusicPic,
+} from "./util";
 import { data as dataDir, storage as storageDir, wasm } from "./folders";
 import { client } from "./request";
 
@@ -29,9 +34,14 @@ class LoadError extends Error {
   }
 }
 
-async function loadFromFilePath(
-  path: string
-): Promise<{ content: Uint8Array; contentType: string }> {
+type SimpleResponse = {
+  status?: number;
+  content: BodyInit;
+  contentType?: string;
+  cacheable?: boolean;
+};
+
+async function loadFromFilePath(path: string): Promise<SimpleResponse> {
   try {
     const fileContent = await packManager
       .getPack<WebPack>("web")
@@ -48,11 +58,7 @@ function getMd5(content: Uint8Array): string {
   return createHash("md5").update(content).digest("hex");
 }
 
-export async function loadFromOrpheusUrl(url: string): Promise<{
-  content: Uint8Array;
-  contentType: string;
-  cacheable?: boolean;
-}> {
+export async function loadFromOrpheusUrl(url: string): Promise<SimpleResponse> {
   const parsedUrl = new URL(url);
   if (parsedUrl.protocol !== "orpheus:") {
     throw new NetworkError(`Invalid URL protocol: ${parsedUrl.protocol}`);
@@ -60,6 +66,7 @@ export async function loadFromOrpheusUrl(url: string): Promise<{
 
   switch (parsedUrl.hostname) {
     case "orpheus":
+      // #region orpheus://orpheus/storage/local
       if (parsedUrl.pathname === "/storage/local") {
         const path = parsedUrl.searchParams.get("file");
         if (!path) {
@@ -76,6 +83,9 @@ export async function loadFromOrpheusUrl(url: string): Promise<{
           cacheable: false,
         };
       }
+      // #endregion
+
+      // #region orpheus://orpheus/wasm/
       if (parsedUrl.pathname.startsWith("/wasm/")) {
         const type = parsedUrl.pathname.slice("/wasm/".length);
         const rawSearchIndex = url.indexOf("?");
@@ -171,6 +181,9 @@ export async function loadFromOrpheusUrl(url: string): Promise<{
         }
         throw new LoadError(`Bad Request: Unsupported wasm type: ${type}`, 400);
       }
+      // #endregion
+
+      // #region orpheus://orpheus/customskin
       if (parsedUrl.pathname === "/customskin") {
         const path = "wasm/skin/customskin";
         const rawSearchIndex = url.indexOf("?");
@@ -241,13 +254,21 @@ export async function loadFromOrpheusUrl(url: string): Promise<{
             mime.getType(extname(name)) || "application/octet-stream",
         };
       }
+      // #endregion
+
+      // #region orpheus://orpheus/* (default)
       return await loadFromFilePath(parsedUrl.pathname);
+    // #endregion
+    // #region orpheus://cache
     case "cache": {
-      const cacheStorage = (await import("./cache")).httpCacheStorage;
       const url = parsedUrl.search.substring(1); // remove leading '?'
       if (!url) {
         throw new LoadError("Bad Request: Missing URL parameter", 400);
       }
+      if (url.startsWith("orpheus:")) {
+        return loadFromOrpheusUrl(url);
+      }
+      const cacheStorage = (await import("./cache")).httpCacheStorage;
       if (!cacheStorage) {
         throw new LoadError("URL cache storage is unavailable", 500);
       }
@@ -268,6 +289,62 @@ export async function loadFromOrpheusUrl(url: string): Promise<{
         contentType,
       };
     }
+    // #endregion
+    case "localmusic": {
+      // #region orpheus://localmusic/pic
+      if (parsedUrl.pathname === "/pic") {
+        const path = normalizePath(
+          decodeURIComponent(parsedUrl.search.substring(1))
+        ); // remove leading '?'
+        if (!existsSync(path)) {
+          throw new LoadError("File not found", 404);
+        }
+        const buf = await readFile(path);
+        const tagger = new MusicTagger();
+        tagger.loadBuffer(buf);
+        const pictures = tagger.pictures;
+        tagger.dispose();
+        if (!pictures) {
+          throw new LoadError("No pictures for this media", 404);
+        }
+        const pic = selectBestMusicPic(pictures);
+        if (!pic) {
+          throw new LoadError("No pictures for this media", 404);
+        }
+        return {
+          // SAFETY: Uint8Array created by NAPI-RS
+          content: pic.data.buffer as unknown as ArrayBuffer,
+          contentType: pic.mimeType ?? "image/png",
+        };
+      }
+      // #endregion
+
+      // #region orpheus://localmusic/lyric
+      if (parsedUrl.pathname === "/lyric") {
+        const path = normalizePath(
+          decodeURIComponent(parsedUrl.search.substring(1))
+        ); // remove leading '?'
+        if (!existsSync(path)) {
+          throw new LoadError("File not found", 404);
+        }
+        const buf = await readFile(path);
+        const tagger = new MusicTagger();
+        tagger.loadBuffer(buf);
+        const lyrics = tagger.lyrics;
+        tagger.dispose();
+        if (!lyrics) {
+          // NCM accepts everything, must return with hard error
+          throw new NetworkError("No lyrics");
+        }
+        return {
+          content: lyrics,
+          contentType: "text/plain",
+        };
+      }
+      // #endregion
+
+      throw new LoadError("Not Found", 404);
+    }
     default:
       throw new NetworkError(`Unknown URL hostname: ${parsedUrl.hostname}`);
   }
@@ -276,16 +353,21 @@ export async function loadFromOrpheusUrl(url: string): Promise<{
 export default function registerOrpheusScheme(protocol: Protocol) {
   protocol.handle("orpheus", async (request) => {
     try {
-      const { content, contentType, cacheable } = await loadFromOrpheusUrl(
-        request.url
-      );
-      const headers: Record<string, string> = {
-        "Content-Type": contentType,
-      };
+      const {
+        status = 200,
+        content,
+        contentType,
+        cacheable,
+      } = await loadFromOrpheusUrl(request.url);
+      const headers: Record<string, string> = {};
+      if (contentType) {
+        headers["Content-Type"] = contentType;
+      }
       if (!cacheable) {
         headers["Cache-Control"] = "no-store";
       }
-      return new Response(content as BodyInit, {
+      return new Response(content, {
+        status,
         headers,
       });
     } catch (error) {
