@@ -45,16 +45,20 @@ type TrackEntry = {
 };
 
 function getLibraryPath(library: MusicLibraries): string | null {
-  switch (library) {
-    case "<mymusic>":
-      return app.getPath("music");
-    case "<download>":
-      return app.getPath("downloads");
-    case "<windowsmedia>":
-    case "<itunes>":
-      return null;
-    default:
-      return normalizePath(library);
+  try {
+    switch (library) {
+      case "<mymusic>":
+        return app.getPath("music");
+      case "<download>":
+        return app.getPath("downloads");
+      case "<windowsmedia>":
+      case "<itunes>":
+        return null;
+      default:
+        return normalizePath(library);
+    }
+  } catch {
+    return null;
   }
 }
 
@@ -225,6 +229,9 @@ registerCallHandler<[MusicLibraries], void>(
         });
       }
     );
+    watcher.on("error", (err) => {
+      console.error("Library observer encountered error:", err);
+    });
     libWatchers.set(lib, watcher);
   }
 );
