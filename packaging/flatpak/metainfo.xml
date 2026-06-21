@@ -62,6 +62,25 @@
   </screenshots>
 
   <releases>
+    <release version="0.15.0" date="2026-06-21">
+      <url type="details">https://github.com/YUCLing/open-orpheus/releases/tag/v0.15.0</url>
+      <description>
+        <ul>
+          <li>Full local music library support.</li>
+          <li xml:lang="zh-CN">完整本地音乐库支持。</li>
+          <li>Dawn log support.</li>
+          <li xml:lang="zh-CN">曙光日志支持。</li>
+          <li>Handle unexpected AudioContext suspend.</li>
+          <li xml:lang="zh-CN">处理非预期的 AudioContext suspend。</li>
+          <li>Fixed mini player window being closable.</li>
+          <li xml:lang="zh-CN">修复迷你播放器窗口可被关闭。</li>
+          <li>Bind MediaSession playback state to the player.</li>
+          <li xml:lang="zh-CN">将 MediaSession 播放状态绑定在播放器上。</li>
+          <li>Reuse effect input node as ReplayGain node.</li>
+          <li xml:lang="zh-CN">复用效果输入节点作为 ReplayGain 节点。</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.14.0" date="2026-06-11">
       <url type="details">https://github.com/YUCLing/open-orpheus/releases/tag/v0.14.0</url>
       <description>
