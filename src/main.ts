@@ -93,9 +93,12 @@ if (existsSync(disableHardwareAccelerationFlag)) {
   app.disableHardwareAcceleration();
 }
 
-if (app.isPackaged)
+if (
+  app.isPackaged &&
+  !["1", "true"].includes(process.env.ENABLE_ELECTRON_MENUS ?? "")
+)
   // Tell Electron we don't need a menu before Electron tries to create one,
-  // this benefits the startup
+  // this benefits the startup time
   Menu.setApplicationMenu(null);
 
 // This method will be called when Electron has finished
