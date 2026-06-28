@@ -51,7 +51,9 @@ export default function registerGuiScheme(protocol: Protocol) {
         const candidates = [filePath];
         if (!extname(pathname)) {
           candidates.push(
-            pathname === "/" ? join(guiDir, "index.html") : `${filePath}.html`
+            url.pathname === "/"
+              ? join(guiDir, "index.html")
+              : `${filePath}.html`
           );
         }
 
