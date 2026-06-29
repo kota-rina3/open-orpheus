@@ -97,8 +97,22 @@ registerCallHandler<[string], void>("os.shellExplor", (event, path) => {
   shell.showItemInFolder(normalizePath(path));
 });
 
-let preventSystemSleepBlocker: null | number = null,
-  preventDisplaySleepBlocker: null | number = null;
+type PowerSaveBlocker = Parameters<typeof powerSaveBlocker.start>[0];
+const powerSaveBlockers: Partial<Record<PowerSaveBlocker, number>> = {};
+function setPowerRequest(blocker: PowerSaveBlocker, enabled: boolean) {
+  if (enabled) {
+    if (powerSaveBlockers[blocker]) return;
+    powerSaveBlockers[blocker] = powerSaveBlocker.start(blocker);
+  } else {
+    const id = powerSaveBlockers[blocker];
+    if (!id) return;
+    if (!powerSaveBlocker.stop(id)) {
+      // Failed to stop it, keep it running
+      return;
+    }
+    delete powerSaveBlockers[blocker];
+  }
+}
 registerCallHandler<
   [
     {
@@ -112,39 +126,11 @@ registerCallHandler<
   "os.setPowerRequests",
   (event, { enable, preventSystemSleep, preventDisplaySleep }) => {
     if (enable) {
-      if (preventSystemSleep) {
-        if (!preventSystemSleepBlocker) {
-          preventSystemSleepBlocker = powerSaveBlocker.start(
-            "prevent-app-suspension"
-          );
-        }
-      } else {
-        if (preventSystemSleepBlocker) {
-          powerSaveBlocker.stop(preventSystemSleepBlocker);
-          preventSystemSleepBlocker = null;
-        }
-      }
-      if (preventDisplaySleep) {
-        if (!preventDisplaySleepBlocker) {
-          preventDisplaySleepBlocker = powerSaveBlocker.start(
-            "prevent-display-sleep"
-          );
-        }
-      } else {
-        if (preventDisplaySleepBlocker) {
-          powerSaveBlocker.stop(preventDisplaySleepBlocker);
-          preventDisplaySleepBlocker = null;
-        }
-      }
+      setPowerRequest("prevent-app-suspension", preventSystemSleep);
+      setPowerRequest("prevent-display-sleep", preventDisplaySleep);
     } else {
-      if (preventSystemSleepBlocker) {
-        powerSaveBlocker.stop(preventSystemSleepBlocker);
-        preventSystemSleepBlocker = null;
-      }
-      if (preventDisplaySleepBlocker) {
-        powerSaveBlocker.stop(preventDisplaySleepBlocker);
-        preventDisplaySleepBlocker = null;
-      }
+      setPowerRequest("prevent-app-suspension", false);
+      setPowerRequest("prevent-display-sleep", false);
     }
   }
 );
