@@ -101,11 +101,11 @@ type PowerSaveBlocker = Parameters<typeof powerSaveBlocker.start>[0];
 const powerSaveBlockers: Partial<Record<PowerSaveBlocker, number>> = {};
 function setPowerRequest(blocker: PowerSaveBlocker, enabled: boolean) {
   if (enabled) {
-    if (powerSaveBlockers[blocker]) return;
+    if (blocker in powerSaveBlockers) return;
     powerSaveBlockers[blocker] = powerSaveBlocker.start(blocker);
   } else {
-    const id = powerSaveBlockers[blocker];
-    if (!id) return;
+    if (!(blocker in powerSaveBlockers)) return;
+    const id = powerSaveBlockers[blocker]!;
     if (!powerSaveBlocker.stop(id)) {
       // Failed to stop it, keep it running
       return;
