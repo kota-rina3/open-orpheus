@@ -52,6 +52,10 @@ struct X11Conn {
     root_y: i16,
     button: u8,
     query_pointer_pending: Option<Arc<QueryPointerPending>>,
+    last_button_press: Option<Vec<u8>>,
+    press_accum: Vec<u8>,
+    press_remaining: usize,
+    pending_inbound: Vec<u8>,
 }
 
 impl X11Conn {
@@ -79,6 +83,10 @@ impl X11Conn {
             root_y: 0,
             button: 1, // Default to Left Click
             query_pointer_pending: None,
+            last_button_press: None,
+            press_accum: Vec::new(),
+            press_remaining: 0,
+            pending_inbound: Vec::new(),
         }
     }
 }
@@ -167,11 +175,22 @@ pub(crate) fn feed_inbound(fd: RawFd, chunk: &[u8]) -> Option<Vec<u8>> {
     };
 
     let mut out = Vec::new();
+    if !conn.pending_inbound.is_empty() {
+        out.append(&mut conn.pending_inbound);
+    }
     let mut chunk_off = 0;
     if conn.rx_stream_remaining > 0 {
         let n = conn.rx_stream_remaining.min(chunk.len());
         if !conn.rx_stream_drop {
             out.extend_from_slice(&chunk[..n]);
+        }
+        if conn.press_remaining > 0 {
+            let p_n = conn.press_remaining.min(n);
+            conn.press_accum.extend_from_slice(&chunk[..p_n]);
+            conn.press_remaining -= p_n;
+            if conn.press_remaining == 0 {
+                conn.last_button_press = Some(std::mem::take(&mut conn.press_accum));
+            }
         }
         conn.rx_stream_remaining -= n;
         if conn.rx_stream_remaining == 0 {
@@ -296,12 +315,14 @@ pub(crate) fn feed_inbound(fd: RawFd, chunk: &[u8]) -> Option<Vec<u8>> {
                     }
                 }
 
+                let mut is_press = false;
                 if evt_code == 4 || evt_code == 5 || evt_code == 6 {
                     conn.root_window = r32(&conn.rx_buf[off + 8..off + 12], conn.is_le);
                     if evt_code == 4 {
                         conn.button = conn.rx_buf[off + 1];
                         conn.root_x = r16(&conn.rx_buf[off + 20..off + 22], conn.is_le) as i16;
                         conn.root_y = r16(&conn.rx_buf[off + 22..off + 24], conn.is_le) as i16;
+                        is_press = true;
                     }
                 } else if evt_code == 35 && inspect_len >= 40 {
                     let evtype = r16(&conn.rx_buf[off + 8..off + 10], conn.is_le);
@@ -313,7 +334,18 @@ pub(crate) fn feed_inbound(fd: RawFd, chunk: &[u8]) -> Option<Vec<u8>> {
                             let ry_fp = r32(&conn.rx_buf[off + 36..off + 40], conn.is_le) as i32;
                             conn.root_x = (rx_fp >> 16) as i16;
                             conn.root_y = (ry_fp >> 16) as i16;
+                            is_press = true;
                         }
+                    }
+                }
+
+                if is_press {
+                    conn.press_accum.clear();
+                    conn.press_accum
+                        .extend_from_slice(&out[out_start..out_start + forward_len]);
+                    conn.press_remaining = total - forward_len;
+                    if conn.press_remaining == 0 {
+                        conn.last_button_press = Some(std::mem::take(&mut conn.press_accum));
                     }
                 }
             }
@@ -558,7 +590,28 @@ pub(super) fn send_net_wm_moveresize_move(window: u32) -> bool {
             return false;
         }
 
-        record_injected_request(conn, 2);
+        record_injected_request(conn, 3);
+
+        let fake_release = if let Some(press) = &conn.last_button_press {
+            let mut release = press.clone();
+            let code = release[0] & 0x7F;
+            if code == 4 {
+                // Core ButtonPress -> ButtonRelease
+                release[0] = (release[0] & 0x80) | 5;
+            } else if code == 35 && release.len() >= 10 {
+                // XI2 ButtonPress -> ButtonRelease (evtype is at offset 8)
+                write_u16(&mut release[8..10], 5, conn.is_le);
+            }
+            Some(release)
+        } else {
+            None
+        };
+
+        // Queue the fake release event in the inbound stream.
+        // It will be seamlessly delivered alongside the next server event.
+        if let Some(release_buf) = fake_release {
+            conn.pending_inbound.extend_from_slice(&release_buf);
+        }
 
         (
             conn.real_fd,
@@ -571,7 +624,7 @@ pub(super) fn send_net_wm_moveresize_move(window: u32) -> bool {
         )
     };
 
-    let mut payload = [0u8; 52];
+    let mut payload = [0u8; 56];
     payload[0] = 27;
     write_u16(&mut payload[2..4], 2, is_le);
     write_u32(&mut payload[4..8], 0, is_le);
@@ -592,6 +645,15 @@ pub(super) fn send_net_wm_moveresize_move(window: u32) -> bool {
     write_u32(&mut payload[40..44], 8, is_le);
     write_u32(&mut payload[44..48], button as u32, is_le);
     write_u32(&mut payload[48..52], 1, is_le);
+
+    // Inject GetInputFocus (Opcode 43) to immediately request a Reply and wake the client's poll/select
+    // The X Server will respond with a side-effect-free GetInputFocus Reply, which flushes the
+    // pending_inbound above through to the client.
+    // Since this reply is tracked by seq tracking as InjectedType::Other, it is automatically
+    // intercepted and dropped in feed_inbound.
+    payload[52] = 43;
+    payload[53] = 0; // pad
+    write_u16(&mut payload[54..56], 1, is_le); // length = 1 word (4 bytes)
 
     super::hook::send_raw_msg(real_fd, &payload)
 }
