@@ -22,8 +22,7 @@ interface BridgeRaw {
 
 export function getBridge<T>(name: string): T {
   const raw = (window as unknown as Record<string, unknown>)[name] as
-    | BridgeRaw
-    | undefined;
+    BridgeRaw | undefined;
   if (!raw) {
     throw new Error(
       `Bridge "${name}" is not exposed by the preload for this window.`

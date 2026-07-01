@@ -7,5 +7,6 @@ export interface SettingsContract {
   get(key: string[]): Promise<(unknown | undefined)[]>;
   set(key: string, value: unknown): Promise<boolean>;
   setMany(entries: { key: string; value: unknown }[]): Promise<boolean[]>;
-  delete(key: string | string[]): Promise<boolean>;
+  delete(key: string): Promise<boolean>;
+  deleteMany(key: string[]): Promise<boolean[]>;
 }

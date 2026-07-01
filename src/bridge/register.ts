@@ -18,17 +18,19 @@ type HasFunctionDeep<T> = T extends (...args: never[]) => unknown
 // "events" subtree are excluded — "events" is always push-from-main
 // (ipcRenderer.on), never handled.
 type DeepIpcHandlers<T> = {
-  [K in keyof T as K extends "events"
-    ? never
-    : T[K] extends (...args: never[]) => unknown
-      ? K
-      : T[K] extends Record<string, unknown>
-        ? T[K] extends unknown[]
-          ? never
-          : HasFunctionDeep<T[K]> extends true
-            ? K
-            : never
-        : never]: T[K] extends (...args: infer A) => infer R
+  [
+    K in keyof T as K extends "events"
+      ? never
+      : T[K] extends (...args: never[]) => unknown
+        ? K
+        : T[K] extends Record<string, unknown>
+          ? T[K] extends unknown[]
+            ? never
+            : HasFunctionDeep<T[K]> extends true
+              ? K
+              : never
+          : never
+  ]: T[K] extends (...args: infer A) => infer R
     ? (event: IpcMainInvokeEvent, ...args: A) => R | Promise<R>
     : T[K] extends Record<string, unknown>
       ? DeepIpcHandlers<T[K]>
