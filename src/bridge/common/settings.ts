@@ -16,6 +16,9 @@ export function registerSettingsHandlers(wnd: Electron.BrowserWindow) {
     async delete(event, key) {
       return await kv.delete(key);
     },
+    async deleteMany(event, key) {
+      return await kv.deleteMany(key);
+    },
   });
 
   const unlistenChange = events.on("change", (e) => {

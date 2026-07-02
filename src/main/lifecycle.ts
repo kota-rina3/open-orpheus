@@ -40,8 +40,9 @@ export const events = new Emittery<LifecycleEvents>();
 export let state = LifecycleState.Starting;
 
 type StateEventData = {
-  [K in keyof typeof STATE_EVENT_MAP]: LifecycleEvents[(typeof STATE_EVENT_MAP)[K] &
-    keyof LifecycleEvents];
+  [
+    K in keyof typeof STATE_EVENT_MAP
+  ]: LifecycleEvents[(typeof STATE_EVENT_MAP)[K] & keyof LifecycleEvents];
 };
 
 export function setLifecycleState<K extends LifecycleState>(

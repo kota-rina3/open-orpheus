@@ -1,60 +1,160 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index ad8c06db70ff05a52ae33f80ef9a1269be38dd2a..674f654b8dd050b67c9020f3fdb9e009f49db8d9 100644
+index 5cc116fc70c26e729ee5c8a278e4b8289f42619b..34a9a648624f771d1b575d2fe1f2a7299f9118bb 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
-@@ -113,7 +113,7 @@ __export(node_sqlite_driver_exports, {
-   nodeSqliteDriver: () => nodeSqliteDriver
- });
- async function createNodeSqliteConnection(options) {
--  const { DatabaseSync } = await import("sqlite");
-+  const { DatabaseSync } = await import("node:sqlite");
-   const db = new DatabaseSync(options.filename);
-   if (options.busyTimeout) {
-     db.exec(`PRAGMA busy_timeout = ${Number(options.busyTimeout)}`);
-@@ -205,7 +205,7 @@ async function loadDriver(name) {
-       return betterSqlite3Driver2;
-     }
-     case "node:sqlite": {
--      await import("sqlite");
-+      await import("node:sqlite");
-       const { nodeSqliteDriver: nodeSqliteDriver2 } = await Promise.resolve().then(() => (init_node_sqlite_driver(), node_sqlite_driver_exports));
-       return nodeSqliteDriver2;
-     }
-diff --git a/dist/index.js b/dist/index.js
-index 30b8214e1c4ae437db1093b892cfd9ddcd356d36..d4fbe7afe4ab8c5392d6f18197a4e58a581e26d4 100644
---- a/dist/index.js
-+++ b/dist/index.js
-@@ -16,7 +16,7 @@ async function loadDriver(name) {
-       return betterSqlite3Driver;
-     }
-     case "node:sqlite": {
--      await import("sqlite");
-+      await import("node:sqlite");
-       const { nodeSqliteDriver } = await import("./node-sqlite-driver-VQKIIBYS.js");
-       return nodeSqliteDriver;
-     }
-diff --git a/dist/node-sqlite-driver-VQKIIBYS.js b/dist/node-sqlite-driver-VQKIIBYS.js
-index 025176a597b33c3dc23356744d13f323f1593698..ff1e21ee05e85b6bd16b67abe3907e83931086a5 100644
---- a/dist/node-sqlite-driver-VQKIIBYS.js
-+++ b/dist/node-sqlite-driver-VQKIIBYS.js
-@@ -5,7 +5,7 @@ import {
- 
- // src/drivers/node-sqlite-driver.ts
- async function createNodeSqliteConnection(options) {
--  const { DatabaseSync } = await import("sqlite");
-+  const { DatabaseSync } = await import("node:sqlite");
-   const db = new DatabaseSync(options.filename);
-   if (options.busyTimeout) {
-     db.exec(`PRAGMA busy_timeout = ${Number(options.busyTimeout)}`);
+@@ -30,49 +30,17 @@ let keyv = require("keyv");
+ keyv = __toESM(keyv, 1);
+ let node_util = require("node:util");
+ //#region src/drivers/index.ts
+-async function loadDriver(name) {
+-	switch (name) {
+-		case "better-sqlite3": {
+-			const { betterSqlite3Driver } = await Promise.resolve().then(() => require("./better-sqlite3-driver-B03bSctu.cjs"));
+-			return betterSqlite3Driver;
+-		}
+-		case "node:sqlite": {
+-			await import("node:sqlite");
+-			const { nodeSqliteDriver } = await Promise.resolve().then(() => require("./node-sqlite-driver-B-xX8Clp.cjs"));
+-			return nodeSqliteDriver;
+-		}
+-		/* v8 ignore next 5 -- @preserve: bun:sqlite only available in Bun runtime */
+-		case "bun:sqlite": {
+-			await import("bun:sqlite");
+-			const { bunSqliteDriver } = await Promise.resolve().then(() => require("./bun-sqlite-driver-DX4IF420.cjs"));
+-			return bunSqliteDriver;
+-		}
+-		default: throw new Error(`Unknown SQLite driver: ${name}`);
+-	}
+-}
+ /**
+ * Resolves which SQLite driver to use.
+-*
+-* - If `preferred` is a {@link SqliteDriver} object, it is returned directly.
+-* - If `preferred` is a driver name string, that specific driver is loaded (throws if unavailable).
+-* - If `preferred` is omitted, auto-detection tries drivers in priority order:
+-*   - **Bun**: `bun:sqlite` then `better-sqlite3`
+-*   - **Node.js**: `node:sqlite` then `better-sqlite3`
+ */
+-async function resolveDriver(preferred) {
+-	if (preferred !== void 0 && typeof preferred === "object" && "connect" in preferred) return preferred;
+-	if (typeof preferred === "string") try {
+-		return await loadDriver(preferred);
++async function resolveDriver() {
++	try {
++		await import("node:sqlite");
++    const { nodeSqliteDriver } = await Promise.resolve().then(() => require("./node-sqlite-driver-B-xX8Clp.cjs"));
++    return nodeSqliteDriver;
+ 	} catch (error) {
+-		throw new Error(`Failed to load SQLite driver "${preferred}": ${error.message}`);
+-	}
+-	/* v8 ignore next -- @preserve: Bun runtime branch */
+-	const candidates = typeof Bun !== "undefined" ? ["bun:sqlite", "better-sqlite3"] : ["node:sqlite", "better-sqlite3"];
+-	for (const name of candidates) try {
+-		return await loadDriver(name);
+-	} catch {}
+-	/* v8 ignore next 3 -- @preserve */
+-	throw new Error("No SQLite driver found. Use Node.js 22.13+ (built-in node:sqlite) or install better-sqlite3: npm install better-sqlite3");
++		throw new Error(`Failed to load SQLite driver: ${error.message}`);
++	}
+ }
+ //#endregion
+ //#region src/drivers/sqlite3-driver.ts
+@@ -764,7 +732,7 @@ var KeyvSqlite = class extends hookified.Hookified {
+ 	* @returns {Promise<Db>} An object with `query` and `close` functions for database operations.
+ 	*/
+ 	async createConnection() {
+-		const driver = await resolveDriver(this._driver);
++		const driver = await resolveDriver();
+ 		this._resolvedDriverName = driver.name;
+ 		return driver.connect({
+ 			filename: this._db,
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 2e9bc4e192f0647ce180ab9eeefee81f24d2527e..8004bffcaea1dabb84f86f76413386cf12c68ce5 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -3,49 +3,17 @@ import { Hookified } from "hookified";
+ import Keyv, { keyvStorageCapability } from "keyv";
+ import { promisify } from "node:util";
+ //#region src/drivers/index.ts
+-async function loadDriver(name) {
+-	switch (name) {
+-		case "better-sqlite3": {
+-			const { betterSqlite3Driver } = await import("./better-sqlite3-driver-B0b897W4.mjs");
+-			return betterSqlite3Driver;
+-		}
+-		case "node:sqlite": {
+-			await import("node:sqlite");
+-			const { nodeSqliteDriver } = await import("./node-sqlite-driver-2C9o0LqR.mjs");
+-			return nodeSqliteDriver;
+-		}
+-		/* v8 ignore next 5 -- @preserve: bun:sqlite only available in Bun runtime */
+-		case "bun:sqlite": {
+-			await import("bun:sqlite");
+-			const { bunSqliteDriver } = await import("./bun-sqlite-driver-CvXCBc_2.mjs");
+-			return bunSqliteDriver;
+-		}
+-		default: throw new Error(`Unknown SQLite driver: ${name}`);
+-	}
+-}
+ /**
+ * Resolves which SQLite driver to use.
+-*
+-* - If `preferred` is a {@link SqliteDriver} object, it is returned directly.
+-* - If `preferred` is a driver name string, that specific driver is loaded (throws if unavailable).
+-* - If `preferred` is omitted, auto-detection tries drivers in priority order:
+-*   - **Bun**: `bun:sqlite` then `better-sqlite3`
+-*   - **Node.js**: `node:sqlite` then `better-sqlite3`
+ */
+-async function resolveDriver(preferred) {
+-	if (preferred !== void 0 && typeof preferred === "object" && "connect" in preferred) return preferred;
+-	if (typeof preferred === "string") try {
+-		return await loadDriver(preferred);
++async function resolveDriver() {
++	try {
++		await import("node:sqlite");
++		const { nodeSqliteDriver } = await import("./node-sqlite-driver-2C9o0LqR.mjs");
++		return nodeSqliteDriver;
+ 	} catch (error) {
+-		throw new Error(`Failed to load SQLite driver "${preferred}": ${error.message}`);
+-	}
+-	/* v8 ignore next -- @preserve: Bun runtime branch */
+-	const candidates = typeof Bun !== "undefined" ? ["bun:sqlite", "better-sqlite3"] : ["node:sqlite", "better-sqlite3"];
+-	for (const name of candidates) try {
+-		return await loadDriver(name);
+-	} catch {}
+-	/* v8 ignore next 3 -- @preserve */
+-	throw new Error("No SQLite driver found. Use Node.js 22.13+ (built-in node:sqlite) or install better-sqlite3: npm install better-sqlite3");
++		throw new Error(`Failed to load SQLite driver: ${error.message}`);
++	}
+ }
+ //#endregion
+ //#region src/drivers/sqlite3-driver.ts
+@@ -737,7 +705,7 @@ var KeyvSqlite = class extends Hookified {
+ 	* @returns {Promise<Db>} An object with `query` and `close` functions for database operations.
+ 	*/
+ 	async createConnection() {
+-		const driver = await resolveDriver(this._driver);
++		const driver = await resolveDriver();
+ 		this._resolvedDriverName = driver.name;
+ 		return driver.connect({
+ 			filename: this._db,
 diff --git a/package.json b/package.json
-index 453fe8d1a51311b7931423f29c87f9cb017cf9f8..ac0b2c38c46b579d35f7a941d5681d179a0ffd4c 100644
+index a7574c374064343ed2bd62a3689ddc41382283c2..8ae3b4532f8b06f5edf1b7c6b30c3eafcd1b5aaf 100644
 --- a/package.json
 +++ b/package.json
 @@ -41,7 +41,6 @@
    },
    "homepage": "https://github.com/jaredwray/keyv",
    "dependencies": {
--    "better-sqlite3": "^11.0.0",
-     "hookified": "^2.0.0"
+-    "better-sqlite3": "^12.10.0",
+     "hookified": "^3.0.0"
    },
    "peerDependencies": {
+@@ -49,7 +48,6 @@
+   },
+   "devDependencies": {
+     "@monstermann/tinybench-pretty-printer": "^0.3.0",
+-    "@types/better-sqlite3": "^7.6.0",
+     "tinybench": "^6.0.2",
+     "tsd": "^0.33.0",
+     "@keyv/test-suite": "^6.0.0-beta.4"

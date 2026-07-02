@@ -35,8 +35,11 @@ export async function setMany(
   return await api.setMany(entries);
 }
 
-export async function del(key: string | string[]): Promise<boolean> {
+export async function del(key: string): Promise<boolean> {
   return await api.delete(key);
+}
+export async function delMany(key: string[]): Promise<boolean[]> {
+  return await api.deleteMany(key);
 }
 
 export const events = emitter;
@@ -46,5 +49,6 @@ export default {
   set,
   setMany,
   delete: del,
+  deleteMany: delMany,
   events: emitter,
 };

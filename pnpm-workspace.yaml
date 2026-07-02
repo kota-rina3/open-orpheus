@@ -3,8 +3,8 @@ packages:
   - "gui/"
   - "modules/*"
 catalog:
-  "@electron/fuses": ^2.1.2
-  keyv: 6.0.0-alpha.3
+  "@electron/fuses": ^2.1.3
+  keyv: 6.0.0-beta.4
 allowBuilds:
   electron: true
   electron-winstaller: true
@@ -13,12 +13,10 @@ allowBuilds:
 patchedDependencies:
   # inlineDynamicImports is deprecated in Vite 8
   "@electron-forge/plugin-vite": patches/@electron-forge__plugin-vite.patch
-  # Patches better-sqlite3 out of package.json, so Electron's packaging won't be confused
+  # Drop other adapter support, as we always use node:sqlite
   "@keyv/sqlite": patches/@keyv__sqlite.patch
   # Fixes compatibility with latest rpmbuild
   electron-installer-redhat@3.4.0: patches/electron-installer-redhat@3.4.0.patch
-  # Fixes listener leak
-  keyv@6.0.0-alpha.3: patches/keyv@6.0.0-alpha.3.patch
 blockExoticSubdeps: false
 nodeLinker: hoisted
 overrides:

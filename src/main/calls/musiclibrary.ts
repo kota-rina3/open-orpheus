@@ -18,11 +18,7 @@ import { toError } from "../../util";
 import { commentToID3Metadata } from "../id3";
 
 type MusicLibraries =
-  | "<mymusic>"
-  | "<download>"
-  | "<windowsmedia>"
-  | "<itunes>"
-  | string;
+  "<mymusic>" | "<download>" | "<windowsmedia>" | "<itunes>" | string;
 
 type TrackEntry = {
   file: string;

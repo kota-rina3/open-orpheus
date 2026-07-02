@@ -21,31 +21,31 @@ export function initialize() {
   kv = new Keyv({ namespace: "settings", store: nativeDbKvDriver });
 
   const get = kv.get.bind(kv);
-  kv.get = async (keyOrKeys, ...args: undefined[]) => {
-    if (Array.isArray(keyOrKeys)) return get(keyOrKeys, ...args);
-    const ret = await get(keyOrKeys, ...args);
+  kv.get = async (keyOrKeys) => {
+    if (Array.isArray(keyOrKeys)) return get(keyOrKeys);
+    const ret = await get(keyOrKeys);
     const defaultValue = KV_ENTRIES[keyOrKeys];
     if (ret === undefined && defaultValue !== undefined) return defaultValue;
     return ret;
   };
 
   const getMany = kv.getMany.bind(kv);
-  kv.getMany = async (keys, ...args: undefined[]) => {
-    const ret = await getMany(keys, ...args);
+  kv.getMany = async (keys) => {
+    const ret = await getMany(keys);
     for (let i = 0; i < keys.length; i++) {
       const defaultValue = KV_ENTRIES[keys[i]];
-      if (ret === undefined && defaultValue !== undefined)
+      if (ret[i] === undefined && defaultValue !== undefined)
         ret[i] = defaultValue as never;
     }
     return ret;
   };
 
   events = new Emittery();
-  kv.hooks.addHandler(KeyvHooks.PRE_SET, ({ key, value }) => {
+  kv.onHook(KeyvHooks.BEFORE_SET, ({ key, value }) => {
     events.emit("change", { key, value });
   });
-  kv.hooks.addHandler(KeyvHooks.POST_DELETE, (data) => {
-    const keys: string[] = Array.isArray(data) ? data : [data];
-    keys.forEach((v) => events.emit("delete", { key: v }));
+  kv.onHook(KeyvHooks.AFTER_DELETE, ({ key }) => {
+    const keys = Array.isArray(key) ? key : [key];
+    keys.forEach((key) => events.emit("delete", { key }));
   });
 }

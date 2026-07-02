@@ -4,9 +4,7 @@
   import * as settings from "$lib/settings";
 
   type TrayClickBehavior =
-    | "depends-on-main-window"
-    | "always-show-menu"
-    | "always-show-main-window";
+    "depends-on-main-window" | "always-show-menu" | "always-show-main-window";
 
   let clickBehaviorPromise = $state(settings.get("tray.clickBehavior"));
 </script>
