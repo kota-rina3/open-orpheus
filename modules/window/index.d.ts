@@ -15,7 +15,7 @@ export declare const enum DesktopEnvironment {
   Unknown = 4
 }
 
-export declare function dragWindow(handle: Buffer): void
+export declare function dragWindow(hwnd: Buffer): void
 
 /**
  * Gets the position of the cursor

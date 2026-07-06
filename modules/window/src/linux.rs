@@ -42,16 +42,16 @@ pub fn is_x11() -> bool {
 }
 
 #[napi]
-pub fn drag_window(env: Env, handle: Buffer) -> Result<()> {
+pub fn drag_window(env: Env, hwnd: Buffer) -> Result<()> {
     if wayland::is_wayland() {
         wayland::send_xdg_toplevel_move();
         return Ok(());
     }
 
-    if handle.len() < 4 {
+    if hwnd.len() < 4 {
         return env.throw("Invalid buffer size for window handle");
     }
-    let Some(window) = handle
+    let Some(window) = hwnd
         .get(0..4)
         .map(|b| u32::from_le_bytes(b.try_into().unwrap()) as u64)
     else {
