@@ -21,6 +21,44 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.ref }}
 
+      - name: Strip non-LoongArch makers from forge.config.ts
+        run: |
+          python3 << 'PYEOF'
+          import re
+          with open("forge.config.ts", "r") as f:
+              content = f.read()
+
+          # Remove import lines for unwanted makers
+          content = re.sub(r'\nimport \{ MakerSquirrel \}.*\n', '\n', content)
+          content = re.sub(r'\nimport \{ MakerRpm \}.*\n', '\n', content)
+          content = re.sub(r'\nimport \{ MakerFlatpak \}.*\n', '\n', content)
+          content = re.sub(r'\nimport \{ MakerAppImage \}.*\n', '\n', content)
+          content = re.sub(r'\nimport \{ MakerZIP \}.*\n', '\n', content)
+
+          # Add back only the imports we need
+          needle = 'import { MakerDeb } from "@electron-forge/maker-deb";'
+          insert = 'import { MakerZIP } from "@electron-forge/maker-zip";'
+          content = content.replace(needle, needle + "\n" + insert)
+
+          # Replace the makers array — keep only MakerDeb + MakerZIP(linux)
+          new_makers = """  makers: [
+              new MakerDeb({
+                options: options.deb,
+              }),
+              new MakerZIP({}, ["linux"]),
+            ],"""
+          content = re.sub(
+              r"  makers: \[.*?\n  \],",
+              new_makers,
+              content,
+              flags=re.DOTALL,
+          )
+
+          with open("forge.config.ts", "w") as f:
+              f.write(content)
+          print("forge.config.ts updated — makers: deb, zip")
+          PYEOF
+
       - name: Set up QEMU for LoongArch64
         run: |
           docker run --rm --privileged tonistiigi/binfmt:master --install all
@@ -38,7 +76,6 @@ jobs:
             bash -c '
               set -euo pipefail
 
-              # ---------- system deps ----------
               echo "::group::Install system dependencies"
               export DEBIAN_FRONTEND=noninteractive
               apt-get update -y
@@ -49,10 +86,9 @@ jobs:
                 librsvg2-dev libavformat-dev libavcodec-dev \
                 libavutil-dev libsoup-3.0-dev \
                 patchelf desktop-file-utils file fakeroot dpkg-dev \
-                zstd python3
+                zstd
               echo "::endgroup::"
 
-              # ---------- Node.js ----------
               echo "::group::Install Node.js (LoongArch)"
               NODE_URL="https://unofficial-builds.nodejs.org/download/release/v26.3.1/node-v26.3.1-linux-loong64.tar.xz"
               curl -fsSLo /tmp/node.tar.xz "${NODE_URL}"
@@ -61,13 +97,11 @@ jobs:
               npm --version
               echo "::endgroup::"
 
-              # ---------- pnpm ----------
               echo "::group::Install pnpm"
               npm install -g pnpm@11
               pnpm --version
               echo "::endgroup::"
 
-              # ---------- Rust ----------
               echo "::group::Install Rust"
               curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
               . /root/.cargo/env
@@ -76,13 +110,11 @@ jobs:
               cargo --version
               echo "::endgroup::"
 
-              # ---------- wasm-bindgen ----------
               echo "::group::Install wasm-bindgen-cli"
               version=$(awk "/^wasm-bindgen =/ { gsub(/\"/, \"\", \$3); print \$3; exit }" Cargo.toml)
               cargo install "wasm-bindgen-cli@${version}"
               echo "::endgroup::"
 
-              # ---------- LoongArch Electron ----------
               echo "::group::Configure LoongArch Electron"
               LOONG_ELECTRON_VERSION="42.3.0"
               sed -i "s/\"electron\": *\"[^\"]*\"/\"electron\": \"${LOONG_ELECTRON_VERSION}\"/" package.json
@@ -91,46 +123,6 @@ jobs:
               echo "Electron pinned to ${LOONG_ELECTRON_VERSION}"
               echo "::endgroup::"
 
-              # ---------- strip unwanted makers ----------
-              echo "::group::Strip non-LoongArch makers from forge.config.ts"
-              python3 << "PYEOF"
-              import re
-              with open("forge.config.ts", "r") as f:
-                  content = f.read()
-
-              # Remove import lines for unwanted makers
-              content = re.sub(r'\nimport \{ MakerSquirrel \}.*\n', '\n', content)
-              content = re.sub(r'\nimport \{ MakerRpm \}.*\n', '\n', content)
-              content = re.sub(r'\nimport \{ MakerFlatpak \}.*\n', '\n', content)
-              content = re.sub(r'\nimport \{ MakerAppImage \}.*\n', '\n', content)
-              content = re.sub(r'\nimport \{ MakerZIP \}.*\n', '\n', content)
-
-              # Add back only the imports we need
-              needle = 'import { MakerDeb } from "@electron-forge/maker-deb";'
-              insert = 'import { MakerZIP } from "@electron-forge/maker-zip";'
-              content = content.replace(needle, needle + "\n" + insert)
-
-              # Replace the makers array — keep only MakerDeb + MakerZIP(linux)
-              new_makers = """  makers: [
-                  new MakerDeb({
-                    options: options.deb,
-                  }),
-                  new MakerZIP({}, ["linux"]),
-                ],"""
-              content = re.sub(
-                  r"  makers: \[.*?\n  \],",
-                  new_makers,
-                  content,
-                  flags=re.DOTALL,
-              )
-
-              with open("forge.config.ts", "w") as f:
-                  f.write(content)
-              print("forge.config.ts updated — makers: deb, zip")
-              PYEOF
-              echo "::endgroup::"
-
-              # ---------- install & build ----------
               echo "::group::Install dependencies"
               pnpm install --no-frozen-lockfile
               echo "::endgroup::"
