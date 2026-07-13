@@ -62,7 +62,7 @@ jobs:
       - name: Pre-build lifecycle module on host (x86_64)
         run: |
           cd modules/lifecycle
-          npm install --ignore-scripts --ignore-engines
+          npm install --ignore-scripts --ignore-engines typescript
           npx tsdown
           ls dist/
           # Remove build script so the LoongArch container skips it (rolldown has no loong64 binding)
