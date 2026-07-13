@@ -68,6 +68,48 @@ jobs:
           # Remove build script so the LoongArch container skips it (rolldown has no loong64 binding)
           node -e "const p=require('./package.json');delete p.scripts.build;require('fs').writeFileSync('./package.json',JSON.stringify(p,null,2)+'\n')"
 
+      - name: Patch window module for LoongArch (sighook unsupported)
+        run: |
+          python3 << 'PYEOF'
+          import re
+
+          # 1. Cargo.toml: restrict sighook to x86/x86_64 only
+          cargo_path = "modules/window/Cargo.toml"
+          with open(cargo_path, "r") as f:
+              cargo = f.read()
+          cargo = cargo.replace(
+              "[target.'cfg(target_os = \"linux\")'.dependencies]\nlibc = \"0.2.182\"\nsighook = \"0.10.0\"",
+              "[target.'cfg(all(target_os = \"linux\", any(target_arch = \"x86_64\", target_arch = \"x86\")))'.dependencies]\nlibc = \"0.2.182\"\nsighook = \"0.10.0\"",
+          )
+          with open(cargo_path, "w") as f:
+              f.write(cargo)
+          print("Patched modules/window/Cargo.toml")
+
+          # 2. linux.rs: gate mod hook + calls behind x86/x86_64 cfg
+          rs_path = "modules/window/src/linux.rs"
+          with open(rs_path, "r") as f:
+              rs = f.read()
+
+          # Gate the mod declaration
+          rs = rs.replace("mod hook;", "#[cfg(any(target_arch = \"x86\", target_arch = \"x86_64\"))]\nmod hook;")
+
+          # Gate hook::init_hooks() call in main()
+          rs = rs.replace(
+              "        hook::init_hooks();",
+              "        #[cfg(any(target_arch = \"x86\", target_arch = \"x86_64\"))]\n        hook::init_hooks();",
+          )
+
+          # Gate hook::remove_hooks() call in on_unload()
+          rs = rs.replace(
+              "        hook::remove_hooks();",
+              "        #[cfg(any(target_arch = \"x86\", target_arch = \"x86_64\"))]\n        hook::remove_hooks();",
+          )
+
+          with open(rs_path, "w") as f:
+              f.write(rs)
+          print("Patched modules/window/src/linux.rs")
+          PYEOF
+
       - name: Set up QEMU for LoongArch64
         run: |
           docker run --rm --privileged tonistiigi/binfmt:master --install all
