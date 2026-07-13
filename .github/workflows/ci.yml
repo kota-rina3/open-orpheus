@@ -1,0 +1,13 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-loongarch64:
+    name: Build LoongArch64 (龙芯)
+    uses: ./.github/workflows/build-loongarch64.yml

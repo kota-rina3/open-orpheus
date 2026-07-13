@@ -1,0 +1,135 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (e.g. 0.10.2)"
+        required: true
+      pre_release:
+        description: "Mark as pre-release"
+        type: boolean
+        default: false
+      skip_commit:
+        description: "Skip the version-bump commit (use when already committed manually)"
+        type: boolean
+        default: false
+
+jobs:
+  prepare:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      commit-sha: ${{ steps.push.outputs.commit-sha }}
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update version in package.json
+        if: ${{ !inputs.skip_commit }}
+        run: |
+          jq --arg v "${{ inputs.version }}" '.version = $v' package.json > tmp.json
+          mv tmp.json package.json
+
+      - name: Clean up existing release if any
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ inputs.version }}"
+          if gh release view "$TAG" --json isDraft -q '.isDraft' 2>/dev/null; then
+            IS_DRAFT=$(gh release view "$TAG" --json isDraft -q '.isDraft')
+            if [ "$IS_DRAFT" = "true" ]; then
+              echo "Deleting existing draft release $TAG"
+              gh release delete "$TAG" --yes
+            else
+              echo "::error::Release $TAG is already published. Aborting."
+              exit 1
+            fi
+          else
+            echo "No existing release found for $TAG, proceeding."
+          fi
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ inputs.version }}" \
+            --draft \
+            --generate-notes \
+            --title "v${{ inputs.version }}" \
+            ${{ inputs.pre_release && '--prerelease' || '' }}
+
+      - name: Commit and push
+        if: ${{ !inputs.skip_commit }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json
+          git commit -m "chore: bump version to ${{ inputs.version }}"
+          git push origin main
+
+      - name: Capture commit SHA
+        id: push
+        run: echo "commit-sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+
+  build-loongarch64:
+    name: Build LoongArch64 (龙芯)
+    needs: prepare
+    uses: ./.github/workflows/build-loongarch64.yml
+    with:
+      ref: ${{ needs.prepare.outputs.commit-sha }}
+
+  publish:
+    name: Publish release
+    needs: [prepare, build-loongarch64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release-files
+          find artifacts -type f -exec cp {} release-files/ \;
+
+      - name: Upload assets to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "v${{ inputs.version }}" release-files/*
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit "v${{ inputs.version }}" \
+            --draft=false \
+            ${{ inputs.pre_release && '--prerelease' || '' }}
+
+  cleanup:
+    name: Clean up draft release on failure
+    needs: [prepare, build-loongarch64, publish]
+    if: failure() || cancelled()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Delete draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "v${{ inputs.version }}" --json isDraft -q '.isDraft' 2>/dev/null | grep -q true; then
+            echo "Deleting draft release v${{ inputs.version }}"
+            gh release delete "v${{ inputs.version }}" --yes
+          fi
