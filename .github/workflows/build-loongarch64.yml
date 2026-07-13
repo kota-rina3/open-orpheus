@@ -54,9 +54,8 @@ jobs:
 
               # ---------- Node.js ----------
               echo "::group::Install Node.js (LoongArch)"
-              NODE_VERSION="24.11.1"
-              curl -fsSLo /tmp/node.tar.xz \
-                "https://github.com/loongson-community/node/releases/download/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-loong64.tar.xz"
+              NODE_URL="https://unofficial-builds.nodejs.org/download/release/v26.3.1/node-v26.3.1-linux-loong64.tar.xz"
+              curl -fsSLo /tmp/node.tar.xz "${NODE_URL}"
               tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1
               node --version
               npm --version
