@@ -59,6 +59,15 @@ jobs:
           print("forge.config.ts updated — makers: deb, zip")
           PYEOF
 
+      - name: Pre-build lifecycle module on host (x86_64)
+        run: |
+          cd modules/lifecycle
+          npm install --ignore-scripts --ignore-engines
+          npx tsdown
+          ls dist/
+          # Remove build script so the LoongArch container skips it (rolldown has no loong64 binding)
+          node -e "const p=require('./package.json');delete p.scripts.build;require('fs').writeFileSync('./package.json',JSON.stringify(p,null,2)+'\n')"
+
       - name: Set up QEMU for LoongArch64
         run: |
           docker run --rm --privileged tonistiigi/binfmt:master --install all
@@ -128,7 +137,7 @@ jobs:
               echo "::endgroup::"
 
               echo "::group::Build native modules"
-              pnpm build:modules
+              SKIP_IF_NO_SCRIPT=1 pnpm build:modules
               echo "::endgroup::"
 
               echo "::group::Build application bundles (deb + zip)"
