@@ -96,6 +96,16 @@ jobs:
                 libavutil-dev libsoup-3.0-dev \
                 patchelf desktop-file-utils file fakeroot dpkg-dev \
                 zstd
+
+              # Fix Rust linker name: deepin may prefix gcc as loongarch64-linux-gnu-gcc-*
+              GCC_BIN=$(which gcc 2>/dev/null || which cc 2>/dev/null || echo /usr/bin/gcc)
+              for name in loongarch64-linux-gnu-gcc-13 loongarch64-linux-gnu-gcc; do
+                if [ ! -f "/usr/bin/${name}" ]; then
+                  ln -sf "${GCC_BIN}" "/usr/bin/${name}"
+                  echo "Linked ${name} -> ${GCC_BIN}"
+                fi
+              done
+              export CC_loongarch64_unknown_linux_gnu=gcc
               echo "::endgroup::"
 
               echo "::group::Install Node.js (LoongArch)"
