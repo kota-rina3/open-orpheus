@@ -226,7 +226,6 @@ jobs:
         timeout-minutes: 60
         env:
           ELECTRON_USE_REMOTE_CHECKSUMS: "1"
-          electron_use_remote_checksums: "1"
         run: |
           set -euo pipefail
           pnpm run package -- --platform linux --arch loong64
