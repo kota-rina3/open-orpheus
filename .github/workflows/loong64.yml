@@ -28,6 +28,11 @@
 #        - @silvia-odwyer/photon-node(图像处理): 实为 wasm-bindgen 产物
 #          (photon_rs.js + photon_rs_bg.wasm), 纯 WebAssembly、架构无关, loong64 可直接跑,
 #          无需任何处理(仅做冒烟自检)。
+#   7. rolldown / @tailwindcss/oxide 的 WASM 回退包是用 WebAssembly SIMD 编译的,
+#      需要 V8 能检测到 LoongArch 的 LSX 扩展。但 QEMU 用户态模拟默认(或按 ELF 头推断)
+#      的 CPU 型号不含 LSX，V8 就报 "Wasm SIMD unsupported"。解决: docker run 加
+#      `-e QEMU_CPU=la464`(la464/max 型号带 LSX+LASX)，强制 QEMU 暴露 LSX。
+#      步骤 2.5 用最小 SIMD wasm 模块快速自检 LSX 是否生效(失败即快速退出)。
 
 name: 编译 open-orpheus (loong64 / deepin 25)
 
@@ -67,6 +72,7 @@ jobs:
             -e ELECTRON_MIRROR="${ELECTRON_MIRROR}" \
             -e ELECTRON_USE_REMOTE_CHECKSUMS=1 \
             -e electron_use_remote_checksums=1 \
+            -e QEMU_CPU=la464 \
             linuxdeepin/deepin:crimson-loong64-v1.6.0 \
             bash -c '
               set -euo pipefail
@@ -93,6 +99,22 @@ jobs:
               ln -sf /opt/node/bin/npx    /usr/local/bin/npx
               export PATH="/opt/node/bin:$PATH"
               node -v && npm -v
+
+              # ---------- 2.5 校验 Wasm SIMD (rolldown WASM 回退需要 LSX) ----------
+              # 用一个含 v128.const 指令的最小 WASM 模块测试 WebAssembly.Module 能否编译。
+              # 若 QEMU 未暴露 LSX，V8 会报 "Wasm SIMD unsupported"，此处直接快速失败，
+              # 避免后续 pnpm install + Rust 编译跑 1~3 小时才在 tsdown 处崩。
+              node -e "
+                const bytes = [0,97,115,109,1,0,0,0,1,5,1,96,0,1,123,3,2,1,0,10,22,1,20,0,253,12,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,11];
+                try {
+                  new WebAssembly.Module(Uint8Array.from(bytes));
+                  console.log(\"WASM SIMD: OK (LSX exposed)\");
+                } catch (e) {
+                  console.error(\"WASM SIMD: UNAVAILABLE -> \" + e.message);
+                  console.error(\"QEMU 未暴露 LSX，rolldown WASM 回退必然失败。请确认 QEMU_CPU=la464 已生效。\");
+                  process.exit(1);
+                }
+              "
 
               # ---------- 3. 安装 pnpm ----------
               npm install -g "pnpm@${PNPM_VERSION}"
