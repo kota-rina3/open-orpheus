@@ -143,8 +143,8 @@ jobs:
               # 加 -D 使其作为 devDependency, 不会打进最终应用包。
               # (Node 24 的 WASI 已稳定, 不再需要 --experimental-wasi-unstable-preview1 标志)
 
-              ROLLDOWN_VERSION=$(node -p "JSON.parse(require('fs').readFileSync(require.resolve('rolldown/package.json'),'utf8')).version" 2>/dev/null || echo "")
-              OXIDE_VERSION=$(node -p "JSON.parse(require('fs').readFileSync(require.resolve('@tailwindcss/oxide/package.json'),'utf8')).version" 2>/dev/null || echo "")
+              ROLLDOWN_VERSION=$(node -p "JSON.parse(require(\"fs\").readFileSync(require.resolve(\"rolldown/package.json\"),\"utf8\")).version" 2>/dev/null || echo "")
+              OXIDE_VERSION=$(node -p "JSON.parse(require(\"fs\").readFileSync(require.resolve(\"@tailwindcss/oxide/package.json\"),\"utf8\")).version" 2>/dev/null || echo "")
               echo "==> 已解析版本: rolldown@${ROLLDOWN_VERSION} | @tailwindcss/oxide@${OXIDE_VERSION}"
 
               WASM_PKGS=""
@@ -165,7 +165,7 @@ jobs:
               # 该 WASI 包已发布, 版本须与主包一致。注意必须装到 dependencies(不用 -D),
               # 否则 electron-forge 打包时不会把它带入应用包, 运行时 require 会失败。
               # (music-tag-native 本身在根 dependencies 里, 这里 -w 加到根 package.json)
-              MUSICTAG_VERSION=$(node -p "JSON.parse(require('fs').readFileSync(require.resolve('music-tag-native/package.json'),'utf8')).version" 2>/dev/null || echo "")
+              MUSICTAG_VERSION=$(node -p "JSON.parse(require(\"fs\").readFileSync(require.resolve(\"music-tag-native/package.json\"),\"utf8\")).version" 2>/dev/null || echo "")
               if [ -n "$MUSICTAG_VERSION" ]; then
                 echo "==> 安装 music-tag-native 的 WASI 回退: music-tag-native-wasm32-wasi@${MUSICTAG_VERSION}"
                 pnpm add -w "music-tag-native-wasm32-wasi@${MUSICTAG_VERSION}"
@@ -179,15 +179,15 @@ jobs:
               #   - @silvia-odwyer/photon-node 通过其内置 photon_rs_bg.wasm 加载
               # 若失败则直接中断(比运行时才暴露强)。QEMU 模拟下 WASM 实例化较慢但可跑。
               node -e "
-                const mods = ['music-tag-native', '@silvia-odwyer/photon-node'];
+                const mods = [\"music-tag-native\", \"@silvia-odwyer/photon-node\"];
                 let ok = true;
                 for (const m of mods) {
                   try {
                     const x = require(m);
-                    console.log('SMOKE OK   ' + m + ' -> ' + typeof x);
+                    console.log(\"SMOKE OK   \" + m + \" -> \" + typeof x);
                   } catch (e) {
                     ok = false;
-                    console.error('SMOKE FAIL ' + m + ': ' + (e && e.message));
+                    console.error(\"SMOKE FAIL \" + m + \": \" + (e && e.message));
                   }
                 }
                 if (!ok) process.exit(1);
