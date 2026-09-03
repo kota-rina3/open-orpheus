@@ -1,38 +1,50 @@
 # ============================================================================
-# open-orpheus 龙芯 (loong64 / LoongArch) 编译流水线
-# 系统: deepin 25 (crimson) | Electron: darkyzhou 移植 v42.3.0 | Node: 24.20.0
-# 镜像: linuxdeepin/deepin:crimson-loong64-v1.6.0
+# open-orpheus 龙芯 (loong64 / LoongArch) 编译流水线 —— v3: 宿主机交叉编译方案
+# 目标系统: deepin 25 (crimson) | Electron: darkyzhou 移植 v42.3.0
 # ============================================================================
 #
-# 关键结论 / 需知:
-#   1. 项目 pin 了 electron@43.3.0，但 loong64 移植(darkyzhou/electron-loong64)
-#      目前最高只有 v42.3.0，因此必须把 Electron 降级到 42.3.0。
-#   2. @electron/packager 的官方架构白名单不含 loong64，会直接报
-#      "Unsupported arch=loong64"。只有当 packagerConfig.download.mirrorOptions
-#      存在时才会跳过该校验，故本流水线会给 forge.config.ts 注入 mirrorOptions。
-#   3. Electron 二进制需要 glibc >= 2.38 且 CPU 支持 LSX（deepin crimson 满足，
-#      仅运行时需要，不影响打包）。
-#   4. AppImage / Flatpak / Rpm 三个 maker 在 loong64 下不可用
-#      (appimagetool 无 loong64 二进制等)，因此只用 `electron-forge package`
-#      产出目录，再手动打成 tar.gz（或后续改用 maker-deb）。
-#   5. 两个构建期原生依赖缺 loong64 二进制, 需装 WASM 回退(见步骤 7.5):
-#        - rolldown(vite8/tsdown 依赖): 无 loong64, WASM 回退 @rolldown/binding-wasm32-wasi
-#        - @tailwindcss/oxide(Tailwind v4 依赖): 无 loong64, WASM 回退 @tailwindcss/oxide-wasm32-wasi
-#      而 esbuild(@esbuild/linux-loong64) 与 unrs-resolver(loongarch64-unknown-linux-gnu)
-#      均已原生支持 loong64, 无需处理。
-#   6. 两个"运行时"原生依赖的处理(见步骤 7.6 / 7.7):
-#        - music-tag-native(napi-rs, 读音乐标签): 无 loong64 原生二进制, 但 napi loader
-#          找不到原生二进制时会自动回退 require("music-tag-native-wasm32-wasi")。
-#          该 WASI 包已发布且版本须与主包一致, 需显式安装到 dependencies(而非 -D),
-#          否则 electron-forge 打包不会带入应用, 运行时直接崩。
-#        - @silvia-odwyer/photon-node(图像处理): 实为 wasm-bindgen 产物
-#          (photon_rs.js + photon_rs_bg.wasm), 纯 WebAssembly、架构无关, loong64 可直接跑,
-#          无需任何处理(仅做冒烟自检)。
-#   7. rolldown / @tailwindcss/oxide 的 WASM 回退包是用 WebAssembly SIMD 编译的,
-#      需要 V8 能检测到 LoongArch 的 LSX 扩展。但 QEMU 用户态模拟默认(或按 ELF 头推断)
-#      的 CPU 型号不含 LSX，V8 就报 "Wasm SIMD unsupported"。解决: docker run 加
-#      `-e QEMU_CPU=la464`(la464/max 型号带 LSX+LASX)，强制 QEMU 暴露 LSX。
-#      步骤 2.5 用最小 SIMD wasm 模块快速自检 LSX 是否生效(失败即快速退出)。
+# 【为何不再在 QEMU 容器里构建】
+#   之前在 QEMU 模拟的 deepin-loong64 容器内直接构建, 卡在 rolldown /
+#   @tailwindcss/oxide 的 WASM 回退包上: 它们是按 WebAssembly SIMD 编译的,
+#   而 Node loong64 的 V8 (13.6) 后端硬编码不支持 Wasm SIMD
+#   (SupportsWasmSimd128() 直接返回 false, 上游 2026 年才合入 LSX SIMD 支持),
+#   报 "Wasm SIMD unsupported"。这是 V8 编译期限制, 与 QEMU 是否暴露 LSX
+#   (QEMU_CPU=la464 等) 无关, 在容器内无解。
+#
+#   因此本方案改为:
+#     - 全部 JS 构建(vite/rolldown/tsdown/tailwind/svelte-kit)在 x86 宿主机
+#       原生进行, rolldown / oxide / esbuild 均直接用官方 x64 原生二进制;
+#     - Rust 原生模块用 cargo-zigbuild + zig 交叉编译出 loong64 的 .node;
+#     - Electron 二进制用 darkyzhou 移植包(@electron/get 从 release 下载);
+#     - 最后在 QEMU 的 deepin-loong64 容器里用 loong64 node 做加载冒烟测试
+#       (只验证原生模块加载, 不涉及 SIMD, V8 无碍)。
+#
+# 【关键事实 / 需知】
+#   1. 项目 pin 了 electron@43.3.0, 但 loong64 移植(darkyzhou/electron-loong64)
+#      最高只有 v42.3.0, 必须降级。
+#   2. @electron/packager 官方架构白名单不含 loong64; 只有当
+#      packagerConfig.download.mirrorOptions 存在时才跳过校验。注意 customDir
+#      必须是 "v42.3.0"(release 目录带 v 前缀, @electron/get 默认目录不带)。
+#      该 release 同时提供 SHASUMS256.txt, 可用远程校验。
+#   3. napi 模块(database/dbus/window)与 music-tag-native 均为纯 Rust 或
+#      带内嵌 C(database 的 rusqlite bundled sqlite, 由 zig cc 交叉编译),
+#      用 cargo-zigbuild 交叉编译。产物放 <模块>/<name>.linux-loong64-gnu.node,
+#      napi 生成的 index.js loader 自带 loong64 分支且优先加载本地文件,
+#      无需任何 loader 改造。
+#   4. glibc 下限锁定 2.36(loong64 主线 glibc 的最低版本), deepin 25 满足;
+#      交叉产物也兼容其他 glibc >= 2.36 的 loong64 发行版。
+#   5. lifecycle / ui 模块(tsdown 打包纯 JS)与 audio-effect(wasm-bindgen
+#      产出纯 WASM)在宿主机原生构建即可, 产物架构无关。
+#   6. music-tag-native 源码在 github.com/subframe7536/music-tag-native,
+#      按 npm 实际安装版本取对应 tag 交叉编译, .node 放进 pnpm 虚拟 store
+#      里的真实目录(经 require.resolve 定位)。
+#   7. AppImage / Flatpak / Rpm maker 在 loong64 下不可用(appimagetool 等
+#      无 loong64 二进制), 只做 electron-forge package 产出目录再打 tar.gz。
+#   8. @silvia-odwyer/photon-node 是纯 WASM(wasm-bindgen, 不含 SIMD 指令),
+#      Electron loong64 的 V8 可直接跑; 7z-wasm / audio-effect 的 WASM 同理。
+#   9. 已知风险: Electron 42 与 43 之间的 API 差异可能需要少量代码适配。
+#  10. 若 @electron/get 校验 SHASUMS 失败, 可在注入的 download 配置里加
+#      unsafelyDisableChecksums: true(该 release 页面附有 sha256 可人工核对)。
 
 name: 编译 open-orpheus (loong64 / deepin 25)
 
@@ -40,195 +52,242 @@ on:
   workflow_dispatch:
 
 env:
-  NODE_VERSION: 24.20.0          # unofficial-builds 的 loong64 版本（项目要求 node>=24）
+  NODE_VERSION: 24.20.0          # loong64 node, 仅用于容器内冒烟测试
   PNPM_VERSION: 11.20.0          # 与 package.json 的 packageManager 一致
   ELECTRON_VERSION: 42.3.0       # loong64 移植最高版本（项目原为 43.3.0，需降级）
   WASM_BINDGEN_VERSION: 0.2.123  # 与根 Cargo.toml 中 wasm-bindgen 版本一致
   ELECTRON_MIRROR: https://github.com/darkyzhou/electron-loong64/releases/download/
+  CROSS_TARGET: loongarch64-unknown-linux-gnu
+  # cargo-zigbuild 支持在 target 后追加 glibc 版本下限
+  CROSS_TARGET_GLIBC: loongarch64-unknown-linux-gnu.2.36
 
 jobs:
   build:
-    name: 编译构建 (loong64)
+    name: 交叉编译构建 (loong64)
     runs-on: ubuntu-24.04
-    timeout-minutes: 360
+    timeout-minutes: 240
 
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 设置 QEMU（loong64 模拟）
+      - name: 设置 QEMU（供最终 deepin 容器冒烟测试）
         uses: docker/setup-qemu-action@v3
 
-      - name: 在 deepin-loong64 容器中编译
-        timeout-minutes: 300
+      # 宿主机用官方 x64 Node 24（项目要求 node>=24），所有 JS 构建原生跑
+      - name: 安装 Node.js（宿主机 x64）
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: 安装 pnpm
+        run: |
+          npm install -g "pnpm@${PNPM_VERSION}"
+          pnpm -v
+
+      # ---------- 1. Rust 工具链 + 交叉目标 + wasm-bindgen ----------
+      # wasm-bindgen-cli 供 audio-effect 模块在宿主机处理 wasm 产物（架构无关）
+      - name: 安装 Rust 工具链
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          rustc -V
+          rustup target add loongarch64-unknown-linux-gnu wasm32-unknown-unknown
+
+      - name: 安装 wasm-bindgen-cli
+        run: |
+          cargo install wasm-bindgen-cli --version "${WASM_BINDGEN_VERSION}" --locked
+          wasm-bindgen --version
+
+      # ---------- 2. zig + cargo-zigbuild（交叉编译核心） ----------
+      # zig cc 负责链接与 C 代码（rusqlite bundled sqlite）的 loong64 交叉编译
+      - name: 安装 zig 与 cargo-zigbuild
+        run: |
+          python3 -m pip install --user ziglang || python3 -m pip install ziglang
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+          if ! command -v zig >/dev/null 2>&1; then
+            printf '#!/bin/sh\nexec python3 -m ziglang "$@"\n' | sudo tee /usr/local/bin/zig >/dev/null
+            sudo chmod +x /usr/local/bin/zig
+          fi
+          zig version
+          cargo install cargo-zigbuild --locked
+          cargo zigbuild --version
+
+      # ---------- 3. Electron 降级 + 安装依赖（宿主机 x64） ----------
+      # ELECTRON_SKIP_BINARY_DOWNLOAD=1: electron npm 包的 postinstall 不下载
+      # x64 二进制（forge 打包时由 @electron/get 从镜像下载 loong64 版）。
+      # -w: open-orpheus 是 pnpm 工作区，加到根 package.json 必须显式声明。
+      - name: Electron 降级并安装依赖
+        run: |
+          export ELECTRON_SKIP_BINARY_DOWNLOAD=1
+          pnpm add -D -w "electron@${ELECTRON_VERSION}"
+          pnpm install --no-frozen-lockfile
+          echo "==> electron: $(node -p "require(\"electron/package.json\").version")"
+
+      # ---------- 4. 交叉编译 napi 模块（database / dbus / window） ----------
+      # cargo zigbuild 产出 lib<name>.so，按 napi 命名约定改名为
+      # <name>.linux-loong64-gnu.node 放进模块目录，loader 会优先加载本地文件。
+      - name: 交叉编译 Rust napi 模块
+        run: |
+          set -euo pipefail
+          for m in database dbus window; do
+            echo "==> 交叉编译 @open-orpheus/${m} -> ${CROSS_TARGET_GLIBC}"
+            (cd "modules/${m}" && cargo zigbuild --release --target "${CROSS_TARGET_GLIBC}")
+            so=$(ls target/${CROSS_TARGET}/release/lib${m}*.so | head -1)
+            cp "${so}" "modules/${m}/${m}.linux-loong64-gnu.node"
+            echo "==> 产物: modules/${m}/${m}.linux-loong64-gnu.node"
+          done
+
+      # ---------- 5. 构建其余模块（tsdown / wasm，宿主机原生） ----------
+      # napi 模块已在步骤 4 交叉编译完，这里把模块 build 脚本里的
+      # "napi build --platform --release"（会按宿主 x64 构建）替换为跳过，
+      # 然后统一跑 build:modules：ui/lifecycle 走 tsdown（x64 原生 rolldown），
+      # audio-effect 走 cargo + wasm-bindgen（wasm32 目标，架构无关）。
+      - name: 构建 TS / WASM 模块
+        run: |
+          set -euo pipefail
+          sed -i 's|napi build --platform --release|echo napi-module-prebuilt-for-loong64|' modules/*/package.json
+          pnpm run build:modules
+
+      # ---------- 6. 交叉编译 music-tag-native 并放入 pnpm store ----------
+      # music-tag-native(napi-rs, lofty)官方未发布 loong64 二进制;
+      # 从其 GitHub 源码按已安装版本交叉编译出原生 .node，放进 pnpm 虚拟
+      # store 里的真实目录（require.resolve 会解析符号链接得到真实路径）。
+      - name: 交叉编译 music-tag-native
+        run: |
+          set -euo pipefail
+          MTN_VERSION=$(node -p "require(\"music-tag-native/package.json\").version")
+          echo "==> music-tag-native 版本: ${MTN_VERSION}"
+          git clone --depth 1 --branch "v${MTN_VERSION}" \
+            https://github.com/subframe7536/music-tag-native.git /tmp/music-tag-native \
+            || git clone --depth 1 \
+              https://github.com/subframe7536/music-tag-native.git /tmp/music-tag-native
+          (cd /tmp/music-tag-native \
+            && cargo zigbuild --release --target "${CROSS_TARGET_GLIBC}")
+          so=$(ls /tmp/music-tag-native/target/${CROSS_TARGET}/release/libmusic_tag_native*.so | head -1)
+          MTN_DIR=$(node -p "require(\"path\").dirname(require.resolve(\"music-tag-native/package.json\"))")
+          echo "==> 放置位置: ${MTN_DIR}"
+          cp "${so}" "${MTN_DIR}/music-tag-native.linux-loong64-gnu.node"
+          # 确认已发布包的 loader 带 loong64 分支（napi-rs cli 3.8.x 生成，正常都有）
+          grep -q "linux-loong64-gnu" "${MTN_DIR}/index.js" \
+            && echo "==> loader 支持 loong64"
+
+      # ---------- 7. 校验产物架构（构建期快速暴露交叉编译问题） ----------
+      - name: 校验 .node 产物为 LoongArch ELF
+        run: |
+          set -euo pipefail
+          MTN_DIR=$(node -p "require(\"path\").dirname(require.resolve(\"music-tag-native/package.json\"))")
+          file \
+            modules/database/database.linux-loong64-gnu.node \
+            modules/dbus/dbus.linux-loong64-gnu.node \
+            modules/window/window.linux-loong64-gnu.node \
+            "${MTN_DIR}/music-tag-native.linux-loong64-gnu.node" \
+            | tee /tmp/arch-check.txt
+          grep -q "LoongArch" /tmp/arch-check.txt \
+            || { echo "!! 存在非 LoongArch 产物"; exit 1; }
+          echo "==> 全部 .node 产物均为 LoongArch"
+
+      # ---------- 8. 给 forge.config.ts 注入 mirrorOptions ----------
+      # 作用: (a) 绕过 @electron/packager 的 loong64 架构白名单校验;
+      #       (b) 让 @electron/get 从 darkyzhou 镜像下载 electron loong64 zip。
+      # customDir 用 "v42.3.0"（release 目录带 v 前缀）。
+      - name: 注入 Electron 镜像配置
+        run: |
+          node -e '
+            const fs = require("fs");
+            const f = "forge.config.ts";
+            let s = fs.readFileSync(f, "utf8");
+            if (s.includes("mirrorOptions")) {
+              console.log("==> forge.config.ts 已含 mirrorOptions, 跳过注入");
+              process.exit(0);
+            }
+            const inject =
+              "    download: {\n" +
+              "      mirrorOptions: {\n" +
+              "        mirror: process.env.ELECTRON_MIRROR,\n" +
+              "        customDir: \"v\" + process.env.ELECTRON_VERSION,\n" +
+              "      },\n" +
+              "    },\n";
+            if (!s.includes("  packagerConfig: {\n")) {
+              console.error("!! 未找到 packagerConfig 注入锚点, forge.config.ts 结构可能已变化");
+              process.exit(1);
+            }
+            s = s.replace("  packagerConfig: {\n", "  packagerConfig: {\n" + inject);
+            fs.writeFileSync(f, s);
+            console.log("==> 已注入 mirrorOptions");
+          '
+
+      # ---------- 9. electron-forge 打包（loong64） ----------
+      # vite 主/预加载/渲染进程构建全部在 x64 宿主机原生完成，产物为平台无关
+      # 的 JS/CSS；打包时下载 electron-v42.3.0-linux-loong64.zip 并替换架构。
+      - name: electron-forge 打包 (linux / loong64)
+        timeout-minutes: 60
+        env:
+          ELECTRON_USE_REMOTE_CHECKSUMS: "1"
+          electron_use_remote_checksums: "1"
+        run: |
+          set -euo pipefail
+          pnpm run package -- --platform linux --arch loong64
+          echo "==> electron 二进制架构确认:"
+          file out/open-orpheus-linux-loong64/electron
+
+      # ---------- 10. deepin 容器冒烟测试（QEMU + loong64 node） ----------
+      # 用 loong64 node 在真实 deepin (glibc) 环境加载全部原生模块与纯 WASM
+      # 依赖, 验证 ELF 架构 / glibc 兼容 / napi ABI。不涉及 SIMD, V8 可跑。
+      # 注意: bash -c '...' 单引号包裹的脚本体里禁止出现单引号。
+      - name: deepin 容器冒烟测试
+        timeout-minutes: 40
         run: |
           docker run --rm --platform linux/loong64 \
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             -e NODE_VERSION="${NODE_VERSION}" \
-            -e PNPM_VERSION="${PNPM_VERSION}" \
-            -e ELECTRON_VERSION="${ELECTRON_VERSION}" \
-            -e WASM_BINDGEN_VERSION="${WASM_BINDGEN_VERSION}" \
-            -e ELECTRON_MIRROR="${ELECTRON_MIRROR}" \
-            -e ELECTRON_USE_REMOTE_CHECKSUMS=1 \
-            -e electron_use_remote_checksums=1 \
-            -e QEMU_CPU=la464 \
             linuxdeepin/deepin:crimson-loong64-v1.6.0 \
             bash -c '
               set -euo pipefail
-
-              # ---------- 0. 环境确认 ----------
               echo "==> 架构: $(uname -m)"
               echo "==> glibc: $(ldd --version | head -1)"
-
-              # ---------- 1. 基础工具 ----------
               export DEBIAN_FRONTEND=noninteractive
-              apt-get update
-              apt-get install -y --no-install-recommends \
-                ca-certificates curl git unzip xz-utils \
-                build-essential python3 pkg-config libtool \
-                libdbus-1-dev
-
-              # ---------- 2. 安装 Node.js 24 (loong64) ----------
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends ca-certificates curl xz-utils >/dev/null
               curl -fsSL -o /tmp/node.tar.xz \
                 "https://unofficial-builds.nodejs.org/download/release/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-loong64.tar.xz"
               mkdir -p /opt/node
               tar -xJf /tmp/node.tar.xz -C /opt/node --strip-components=1
-              ln -sf /opt/node/bin/node   /usr/local/bin/node
-              ln -sf /opt/node/bin/npm    /usr/local/bin/npm
-              ln -sf /opt/node/bin/npx    /usr/local/bin/npx
               export PATH="/opt/node/bin:$PATH"
-              node -v && npm -v
-
-              # ---------- 2.5 校验 Wasm SIMD (rolldown WASM 回退需要 LSX) ----------
-              # 用一个含 v128.const 指令的最小 WASM 模块测试 WebAssembly.Module 能否编译。
-              # 若 QEMU 未暴露 LSX，V8 会报 "Wasm SIMD unsupported"，此处直接快速失败，
-              # 避免后续 pnpm install + Rust 编译跑 1~3 小时才在 tsdown 处崩。
+              node -v
               node -e "
-                const bytes = [0,97,115,109,1,0,0,0,1,5,1,96,0,1,123,3,2,1,0,10,22,1,20,0,253,12,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,11];
-                try {
-                  new WebAssembly.Module(Uint8Array.from(bytes));
-                  console.log(\"WASM SIMD: OK (LSX exposed)\");
-                } catch (e) {
-                  console.error(\"WASM SIMD: UNAVAILABLE -> \" + e.message);
-                  console.error(\"QEMU 未暴露 LSX，rolldown WASM 回退必然失败。请确认 QEMU_CPU=la464 已生效。\");
-                  process.exit(1);
-                }
-              "
-
-              # ---------- 3. 安装 pnpm ----------
-              npm install -g "pnpm@${PNPM_VERSION}"
-              pnpm -v
-
-              # ---------- 4. 安装 Rust（loong64 host + wasm32 目标） ----------
-              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs \
-                | sh -s -- -y --profile minimal --default-toolchain stable
-              source "$HOME/.cargo/env"
-              rustc -Vv | grep host || true
-              rustup target add wasm32-unknown-unknown
-              # wasm-bindgen CLI 版本必须与 Cargo.toml 中 wasm-bindgen 一致
-              cargo install wasm-bindgen-cli --version "${WASM_BINDGEN_VERSION}" --locked
-
-              # ---------- 5. Electron 降级到 loong64 移植版本 ----------
-              # pnpm 的 allowBuilds 已含 electron，postinstall 会用 ELECTRON_MIRROR
-              # 自动下载 electron-v42.3.0-linux-loong64.zip
-              # 注意: open-orpheus 是 pnpm 工作区，往根 package.json 加 devDependency
-              # 必须显式带 -w (--workspace-root)，否则报 ERR_PNPM_ADDING_TO_ROOT
-              pnpm add -D -w "electron@${ELECTRON_VERSION}"
-
-              # ---------- 6. 注入 mirrorOptions 绕过 arch 校验 ----------
-              # @electron/packager 官方白名单无 loong64；存在 mirrorOptions 时跳过校验，
-              # 并让 @electron/get 从 darkyzhou 镜像下载 loong64 二进制。
-              node -e "
-                const fs = require(\"fs\");
-                const f = \"forge.config.ts\";
-                let s = fs.readFileSync(f, \"utf8\");
-                if (!s.includes(\"mirrorOptions\")) {
-                  const inject =
-                    \"    download: {\\n\" +
-                    \"      mirrorOptions: { mirror: \\\"${ELECTRON_MIRROR}\\\" },\\n\" +
-                    \"    },\\n\";
-                  s = s.replace(\"  packagerConfig: {\\n\", \"  packagerConfig: {\\n\" + inject);
-                  fs.writeFileSync(f, s);
-                }
-              "
-
-              # ---------- 7. 安装依赖 ----------
-              pnpm install --no-frozen-lockfile
-
-              # ---------- 7.5 给缺 loong64 原生二进制的构建期依赖安装 WASM 回退 ----------
-              # 说明: rolldown(vite8/tsdown 依赖) 与 @tailwindcss/oxide(Tailwind v4 依赖)
-              # 官方均未发布 loong64 原生二进制, 但其 napi 加载器在找不到原生二进制时
-              # 会自动回退到 WASM 构建。rolldown 的 WASM 回退包甚至不在 optionalDependencies
-              # 里, 必须显式安装; tailwind oxide 的在 optionalDependencies 里但 pnpm 不会
-              # 默认装到 loong64。这里按实际解析到的版本安装匹配的 -wasm32-wasi 包,
-              # 加 -D 使其作为 devDependency, 不会打进最终应用包。
-              # (Node 24 的 WASI 已稳定, 不再需要 --experimental-wasi-unstable-preview1 标志)
-
-              ROLLDOWN_VERSION=$(node -p "JSON.parse(require(\"fs\").readFileSync(require.resolve(\"rolldown/package.json\"),\"utf8\")).version" 2>/dev/null || echo "")
-              OXIDE_VERSION=$(node -p "JSON.parse(require(\"fs\").readFileSync(require.resolve(\"@tailwindcss/oxide/package.json\"),\"utf8\")).version" 2>/dev/null || echo "")
-              echo "==> 已解析版本: rolldown@${ROLLDOWN_VERSION} | @tailwindcss/oxide@${OXIDE_VERSION}"
-
-              WASM_PKGS=""
-              [ -n "$ROLLDOWN_VERSION" ] && WASM_PKGS="$WASM_PKGS @rolldown/binding-wasm32-wasi@${ROLLDOWN_VERSION}"
-              [ -n "$OXIDE_VERSION" ] && WASM_PKGS="$WASM_PKGS @tailwindcss/oxide-wasm32-wasi@${OXIDE_VERSION}"
-
-              if [ -n "$WASM_PKGS" ]; then
-                echo "==> 安装 WASM 回退包:${WASM_PKGS}"
-                # shellcheck disable=SC2086
-                pnpm add -D -w $WASM_PKGS
-              else
-                echo "==> 未检测到需要 WASM 回退的依赖, 跳过"
-              fi
-
-              # ---------- 7.6 运行时原生依赖的 loong64 处理 ----------
-              # music-tag-native(napi-rs): 无 loong64 原生二进制, 但 napi loader 在
-              # 找不到原生二进制时会自动回退 require("music-tag-native-wasm32-wasi")。
-              # 该 WASI 包已发布, 版本须与主包一致。注意必须装到 dependencies(不用 -D),
-              # 否则 electron-forge 打包时不会把它带入应用包, 运行时 require 会失败。
-              # (music-tag-native 本身在根 dependencies 里, 这里 -w 加到根 package.json)
-              MUSICTAG_VERSION=$(node -p "JSON.parse(require(\"fs\").readFileSync(require.resolve(\"music-tag-native/package.json\"),\"utf8\")).version" 2>/dev/null || echo "")
-              if [ -n "$MUSICTAG_VERSION" ]; then
-                echo "==> 安装 music-tag-native 的 WASI 回退: music-tag-native-wasm32-wasi@${MUSICTAG_VERSION}"
-                pnpm add -w "music-tag-native-wasm32-wasi@${MUSICTAG_VERSION}"
-              else
-                echo "==> 未检测到 music-tag-native, 跳过"
-              fi
-
-              # ---------- 7.7 运行时原生模块冒烟自检 ----------
-              # 打包前确认两个运行时依赖都能真正加载:
-              #   - music-tag-native 通过 WASI 回退加载
-              #   - @silvia-odwyer/photon-node 通过其内置 photon_rs_bg.wasm 加载
-              # 若失败则直接中断(比运行时才暴露强)。QEMU 模拟下 WASM 实例化较慢但可跑。
-              node -e "
-                const mods = [\"music-tag-native\", \"@silvia-odwyer/photon-node\"];
-                let ok = true;
+                const mods = [
+                  \"music-tag-native\",
+                  \"@open-orpheus/database\",
+                  \"@open-orpheus/dbus\",
+                  \"@open-orpheus/window\",
+                  \"@silvia-odwyer/photon-node\",
+                ];
+                let failed = 0;
                 for (const m of mods) {
                   try {
-                    const x = require(m);
-                    console.log(\"SMOKE OK   \" + m + \" -> \" + typeof x);
+                    require(m);
+                    console.log(\"SMOKE OK   \" + m);
                   } catch (e) {
-                    ok = false;
-                    console.error(\"SMOKE FAIL \" + m + \": \" + (e && e.message));
+                    failed++;
+                    console.error(\"SMOKE FAIL \" + m + \" -> \" + (e && e.message));
                   }
                 }
-                if (!ok) process.exit(1);
+                if (failed > 0) process.exit(1);
               "
-
-              # ---------- 8. 编译 Rust 模块（napi 原生 + WASM） ----------
-              # modules/*: database/window/ui/dbus/smtc/nowplaying 用 napi 3.0 编译
-              # loong64 原生 .node；audio-effect 用 wasm-bindgen 编成 WASM。
-              pnpm build:modules
-
-              # ---------- 9. 打包（仅 package，跳过不可用的 maker） ----------
-              pnpm package -- --platform linux --arch loong64
-
-              # ---------- 10. 产出 tar.gz ----------
-              cd out
-              tar -czf open-orpheus-linux-loong64.tar.gz open-orpheus-linux-loong64
-              ls -lh
-              echo "==> 构建完成: out/open-orpheus-linux-loong64"
+              echo "==> 冒烟测试通过: 全部 loong64 原生模块可正常加载"
             '
+
+      # ---------- 11. 产出 tar.gz ----------
+      - name: 打包产物 tar.gz
+        run: |
+          cd out
+          tar -czf open-orpheus-linux-loong64.tar.gz open-orpheus-linux-loong64
+          ls -lh
+          echo "==> 构建完成: out/open-orpheus-linux-loong64"
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
