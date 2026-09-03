@@ -1,0 +1,311 @@
+name: Build LoongArch64 Bundles
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Open Orpheus 龙芯（LoongArch64）构建流水线
+#
+# 适配目标: deepin 25 (loong64)
+# Electron: 42.3.0 (darkyzhou/electron-loong64)
+# Node.js:  v26.3.1 (unofficial-builds.nodejs.org, loong64)
+#
+# 核心适配点:
+#   1. Electron 降级 43.3.0 → 42.3.0（龙芯版仅有 42.3.0）
+#   2. lifecycle 模块在 x86_64 host 预构建（rolldown 无 loong64 native binding）
+#   3. window 模块的 sighook 在 loong64 上不可用，通过 cfg gate 禁用
+#   4. forge.config.ts 裁剪 makers，仅保留 deb + zip
+#   5. 使用 QEMU + docker linuxdeepin/deepin:crimson-loong64 容器内构建
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to checkout (defaults to caller's ref)
+        required: false
+        type: string
+        default: ""
+  workflow_dispatch:
+
+jobs:
+  build-loongarch64:
+    name: Build on LoongArch64 (龙芯)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      # ─────────────────────────────────────────────────────────────────────
+      # Step 1: 裁剪 forge.config.ts — 仅保留 deb + zip maker
+      # 龙芯平台上 Squirrel(Windows)、RPM、Flatpak、AppImage 均不可用
+      # ─────────────────────────────────────────────────────────────────────
+      - name: Strip non-LoongArch makers from forge.config.ts
+        run: |
+          python3 << 'PYEOF'
+          import re
+          with open("forge.config.ts", "r") as f:
+              content = f.read()
+
+          # Remove import lines for unwanted makers
+          content = re.sub(r'\nimport \{ MakerSquirrel \}.*\n', '\n', content)
+          content = re.sub(r'\nimport \{ MakerRpm \}.*\n', '\n', content)
+          content = re.sub(r'\nimport \{ MakerFlatpak \}.*\n', '\n', content)
+          content = re.sub(r'\nimport \{ MakerAppImage \}.*\n', '\n', content)
+          content = re.sub(r'\nimport \{ MakerZIP \}.*\n', '\n', content)
+
+          # Add back only the imports we need
+          needle = 'import { MakerDeb } from "@electron-forge/maker-deb";'
+          insert = 'import { MakerZIP } from "@electron-forge/maker-zip";'
+          content = content.replace(needle, needle + "\n" + insert)
+
+          # Replace the makers array — keep only MakerDeb + MakerZIP(linux)
+          new_makers = """  makers: [
+              new MakerDeb({
+                options: options.deb,
+              }),
+              new MakerZIP({}, ["linux"]),
+            ],"""
+          content = re.sub(
+              r"  makers: \[.*?\n  \],",
+              new_makers,
+              content,
+              flags=re.DOTALL,
+          )
+
+          with open("forge.config.ts", "w") as f:
+              f.write(content)
+          print("forge.config.ts updated — makers: deb, zip")
+          PYEOF
+
+      # ─────────────────────────────────────────────────────────────────────
+      # Step 2: 在 x86_64 host 上预构建 lifecycle 模块
+      #
+      # lifecycle 模块使用 tsdown（基于 rolldown），rolldown 的 napi 原生绑定
+      # 没有 loong64 版本，在龙芯容器内会安装失败。
+      # 解决方案: 在 host 上预构建，然后删除 build 脚本让容器跳过此模块。
+      # ─────────────────────────────────────────────────────────────────────
+      - name: Pre-build lifecycle module on host (x86_64)
+        run: |
+          cd modules/lifecycle
+          npm install --ignore-scripts --ignore-engines typescript
+          npx tsdown
+          ls dist/
+          # Remove build script so the LoongArch container skips it (rolldown has no loong64 binding)
+          node -e "const p=require('./package.json');delete p.scripts.build;require('fs').writeFileSync('./package.json',JSON.stringify(p,null,2)+'\n')"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # Step 3: 为 loong64 打补丁 — 禁用 sighook
+      #
+      # window 模块的 proxy 子模块使用 sighook crate 进行 inline hook，
+      # 而 sighook 依赖 x86/x86_64 的内联汇编，不支持 loong64 架构。
+      #
+      # 补丁内容:
+      #   - Cargo.toml: 将 sighook 依赖限制为仅 x86/x86_64
+      #   - linux.rs: 用 cfg gate 包裹 mod proxy 声明和 proxy::init_hooks()/remove_hooks() 调用
+      #
+      # 注意: 项目在 2026-08 重构后，模块名从 hook → proxy，
+      #       此处补丁已适配重构后的代码结构。
+      # ─────────────────────────────────────────────────────────────────────
+      - name: Patch window module for LoongArch (sighook unsupported)
+        run: |
+          python3 << 'PYEOF'
+          import re
+
+          # ── 1. Cargo.toml: 限制 sighook 仅在 x86/x86_64 上编译 ──
+          cargo_path = "modules/window/Cargo.toml"
+          with open(cargo_path, "r") as f:
+              cargo = f.read()
+
+          # 原始配置:
+          #   [target.'cfg(target_os = "linux")'.dependencies]
+          #   libc = "0.2.182"
+          #   sighook = "0.10.0"
+          #
+          # 修改为: sighook 仅在 x86/x86_64 上可用
+          old_deps = '[target.\'cfg(target_os = "linux")\'.dependencies]\nlibc = "0.2.182"\nsighook = "0.10.0"'
+          new_deps = '''[target.'cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "x86")))'.dependencies]
+libc = "0.2.182"
+sighook = "0.10.0"
+
+# loong64 等 non-x86 架构仅需要 libc，不需要 sighook
+[target.'cfg(all(target_os = "linux", not(any(target_arch = "x86_64", target_arch = "x86"))))'.dependencies]
+libc = "0.2.182"'''
+
+          if old_deps in cargo:
+              cargo = cargo.replace(old_deps, new_deps)
+          else:
+              # Fallback: 用正则替换
+              cargo = re.sub(
+                  r'\[target\.\'cfg\(target_os = "linux"\)\'\.dependencies\]\nlibc = "[^"]+"\nsighook = "[^"]+"',
+                  new_deps,
+                  cargo,
+              )
+
+          with open(cargo_path, "w") as f:
+              f.write(cargo)
+          print("Patched modules/window/Cargo.toml — sighook gated to x86/x86_64")
+
+          # ── 2. linux.rs: 用 cfg gate 包裹 proxy 模块引用 ──
+          #
+          # 重构后的代码结构:
+          #   modules/window/src/linux.rs  — 主模块，引用 mod proxy
+          #   modules/window/src/linux/proxy/mod.rs — proxy 实现（使用 sighook）
+          #
+          # 需要补丁的位置:
+          #   a) `mod proxy;` 声明 → 加 cfg gate
+          #   b) `proxy::init_hooks()` 调用 → 加 cfg gate
+          #   c) `proxy::remove_hooks()` 调用 → 加 cfg gate
+          #
+          rs_path = "modules/window/src/linux.rs"
+          with open(rs_path, "r") as f:
+              rs = f.read()
+
+          cfg_arch = '#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]'
+
+          # a) Gate mod proxy 声明
+          rs = rs.replace(
+              "mod proxy;",
+              f'{cfg_arch}\nmod proxy;',
+          )
+
+          # b) Gate proxy::init_hooks() in module_init
+          rs = rs.replace(
+              "        proxy::init_hooks();",
+              f'        {cfg_arch}\n        proxy::init_hooks();',
+          )
+
+          # c) Gate proxy::remove_hooks() in on_unload
+          rs = rs.replace(
+              "        proxy::remove_hooks();",
+              f'        {cfg_arch}\n        proxy::remove_hooks();',
+          )
+
+          with open(rs_path, "w") as f:
+              f.write(rs)
+          print("Patched modules/window/src/linux.rs — proxy gated to x86/x86_64")
+          PYEOF
+
+      # ─────────────────────────────────────────────────────────────────────
+      # Step 4: 安装 QEMU binfmt 支持，使 x86_64 host 可以运行 loong64 容器
+      # ─────────────────────────────────────────────────────────────────────
+      - name: Set up QEMU for LoongArch64
+        run: |
+          docker run --rm --privileged tonistiigi/binfmt:master --install all
+
+      # ─────────────────────────────────────────────────────────────────────
+      # Step 5: 在龙芯容器内执行完整构建
+      #
+      # 容器镜像: linuxdeepin/deepin:crimson-loong64
+      #   - crimson 是 deepin 25 的开发代号
+      #   - 该镜像原生运行在 loong64 架构上（通过 QEMU 模拟）
+      #
+      # 构建流程:
+      #   a) 安装系统依赖（编译工具链、GTK、WebKit、FFmpeg 等）
+      #   b) 安装 Node.js v26.3.1 (loong64)
+      #   c) 安装 pnpm
+      #   d) 安装 Rust + wasm32 target + wasm-bindgen-cli
+      #   e) 配置 Electron 龙芯版镜像
+      #   f) pnpm install
+      #   g) 构建原生模块（Rust napi-rs + WASM）
+      #   h) electron-forge make → deb + zip
+      # ─────────────────────────────────────────────────────────────────────
+      - name: Build inside LoongArch64 container
+        run: |
+          docker run --rm --platform linux/loong64 \
+            --user root \
+            -v ${{ github.workspace }}:/workspace \
+            -v ${{ runner.temp }}/cargo-registry:/root/.cargo/registry \
+            -v ${{ runner.temp }}/pnpm-store:/root/.local/share/pnpm \
+            -v ${{ runner.temp }}/electron-cache:/root/.cache/electron \
+            -w /workspace \
+            linuxdeepin/deepin:crimson-loong64 \
+            bash -c '
+              set -euo pipefail
+
+              echo "::group::Install system dependencies"
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update -y
+              apt-get install -y --no-install-recommends \
+                ca-certificates curl git xz-utils \
+                build-essential pkg-config \
+                libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
+                librsvg2-dev libavformat-dev libavcodec-dev \
+                libavutil-dev libsoup-3.0-dev \
+                patchelf desktop-file-utils file fakeroot dpkg-dev \
+                zstd
+
+              # Fix Rust linker name: deepin may prefix gcc as loongarch64-linux-gnu-gcc-*
+              GCC_BIN=$(which gcc 2>/dev/null || which cc 2>/dev/null || echo /usr/bin/gcc)
+              for name in loongarch64-linux-gnu-gcc-13 loongarch64-linux-gnu-gcc; do
+                if [ ! -f "/usr/bin/${name}" ]; then
+                  ln -sf "${GCC_BIN}" "/usr/bin/${name}"
+                  echo "Linked ${name} -> ${GCC_BIN}"
+                fi
+              done
+              export CC_loongarch64_unknown_linux_gnu=gcc
+              echo "::endgroup::"
+
+              echo "::group::Install Node.js (LoongArch)"
+              NODE_URL="https://unofficial-builds.nodejs.org/download/release/v26.3.1/node-v26.3.1-linux-loong64.tar.xz"
+              curl -fsSLo /tmp/node.tar.xz "${NODE_URL}"
+              tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1
+              node --version
+              npm --version
+              echo "::endgroup::"
+
+              echo "::group::Install pnpm"
+              npm install -g pnpm@11
+              pnpm --version
+              echo "::endgroup::"
+
+              echo "::group::Install Rust"
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+              . /root/.cargo/env
+              rustup target add wasm32-unknown-unknown
+              rustc --version
+              cargo --version
+              echo "::endgroup::"
+
+              echo "::group::Install wasm-bindgen-cli"
+              version=$(awk "/^wasm-bindgen =/ { gsub(/\"/, \"\", \$3); print \$3; exit }" Cargo.toml)
+              cargo install "wasm-bindgen-cli@${version}"
+              echo "::endgroup::"
+
+              echo "::group::Configure LoongArch Electron"
+              LOONG_ELECTRON_VERSION="42.3.0"
+              sed -i "s/\"electron\": *\"[^\"]*\"/\"electron\": \"${LOONG_ELECTRON_VERSION}\"/" package.json
+              export ELECTRON_MIRROR="https://github.com/darkyzhou/electron-loong64/releases/download/"
+              export ELECTRON_CUSTOM_DIR="v${LOONG_ELECTRON_VERSION}"
+              echo "Electron pinned to ${LOONG_ELECTRON_VERSION}"
+              echo "::endgroup::"
+
+              echo "::group::Install dependencies"
+              pnpm install --no-frozen-lockfile
+              echo "::endgroup::"
+
+              echo "::group::Build native modules"
+              SKIP_IF_NO_SCRIPT=1 pnpm build:modules
+              echo "::endgroup::"
+
+              echo "::group::Build application bundles (deb + zip)"
+              pnpm make
+              echo "::endgroup::"
+            '
+
+      # ─────────────────────────────────────────────────────────────────────
+      # Step 6: 上传构建产物
+      # ─────────────────────────────────────────────────────────────────────
+      - name: Upload deb
+        uses: actions/upload-artifact@v7
+        with:
+          name: deb-loongarch64
+          path: out/make/deb/**
+          if-no-files-found: ignore
+
+      - name: Upload zip
+        uses: actions/upload-artifact@v7
+        with:
+          name: zip-loongarch64
+          path: out/make/zip/**
+          if-no-files-found: ignore
