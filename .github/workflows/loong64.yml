@@ -287,7 +287,11 @@ jobs:
           ELECTRON_USE_REMOTE_CHECKSUMS: "1"
         run: |
           set -euo pipefail
-          pnpm run package -- --platform linux --arch loong64
+          # 注意: 不能用 "pnpm run package -- --platform ..." —— pnpm 11 会把字面量
+          # "--" 原样传给脚本, electron-forge(commander) 把 "--" 之后的所有参数
+          # 当作位置参数, --arch/--platform 被完全忽略, 回退宿主架构 x64 去镜像
+          # 下载 x64 zip → 404。直接调用 node_modules/.bin 里的二进制最稳。
+          ./node_modules/.bin/electron-forge package --platform linux --arch loong64
           echo "==> electron 二进制架构确认:"
           file out/open-orpheus-linux-loong64/electron
 
