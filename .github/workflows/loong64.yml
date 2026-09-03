@@ -113,7 +113,8 @@ jobs:
           fi
           zig version
           cargo install cargo-zigbuild --locked
-          cargo zigbuild --version
+          # cargo-zigbuild 未实现 --version 参数, 用 --help 验证子命令已注册
+          cargo zigbuild --help >/dev/null
 
       # ---------- 3. Electron 降级 + 安装依赖（宿主机 x64） ----------
       # ELECTRON_SKIP_BINARY_DOWNLOAD=1: electron npm 包的 postinstall 不下载
