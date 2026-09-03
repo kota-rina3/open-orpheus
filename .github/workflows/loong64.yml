@@ -97,7 +97,9 @@ jobs:
               # ---------- 5. Electron 降级到 loong64 移植版本 ----------
               # pnpm 的 allowBuilds 已含 electron，postinstall 会用 ELECTRON_MIRROR
               # 自动下载 electron-v42.3.0-linux-loong64.zip
-              pnpm add -D "electron@${ELECTRON_VERSION}"
+              # 注意: open-orpheus 是 pnpm 工作区，往根 package.json 加 devDependency
+              # 必须显式带 -w (--workspace-root)，否则报 ERR_PNPM_ADDING_TO_ROOT
+              pnpm add -D -w "electron@${ELECTRON_VERSION}"
 
               # ---------- 6. 注入 mirrorOptions 绕过 arch 校验 ----------
               # @electron/packager 官方白名单无 loong64；存在 mirrorOptions 时跳过校验，
