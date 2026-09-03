@@ -42,7 +42,12 @@
 #      无 loong64 二进制), 只做 electron-forge package 产出目录再打 tar.gz。
 #   8. @silvia-odwyer/photon-node 是纯 WASM(wasm-bindgen, 不含 SIMD 指令),
 #      Electron loong64 的 V8 可直接跑; 7z-wasm / audio-effect 的 WASM 同理。
-#   9. 已知风险: Electron 42 与 43 之间的 API 差异可能需要少量代码适配。
+#   9. window 模块的 Linux 依赖 sighook 0.10 只支持 x86_64/aarch64, 在
+#      loong64 上 compile_error!。它仅被 proxy/mod.rs 用于 hook libc
+#      connect/close(Wayland/X11 MITM)。步骤 3.5 打 cfg 补丁: 依赖限定到
+#      非 loongarch64 + 桩函数, hook 安装失败时优雅降级(等同运行时
+#      DISABLE_DISPLAY_SERVER_HOOKS=1), 常规窗口功能不受影响, 不影响 x64。
+#   10. 已知风险: Electron 42 与 43 之间的 API 差异可能需要少量代码适配。
 #  10. 若 @electron/get 校验 SHASUMS 失败, 可在注入的 download 配置里加
 #      unsafelyDisableChecksums: true(该 release 页面附有 sha256 可人工核对)。
 
@@ -126,6 +131,59 @@ jobs:
           pnpm add -D -w "electron@${ELECTRON_VERSION}"
           pnpm install --no-frozen-lockfile
           echo "==> electron: $(node -p "require(\"electron/package.json\").version")"
+
+      # ---------- 3.5. window 模块 loong64 补丁 ----------
+      # sighook 0.10 只支持 x86_64/aarch64, 在 loong64 上 compile_error! 直接失败。
+      # 它只被 proxy/mod.rs 用于 hook libc connect/close(实现 Wayland/X11 MITM)。
+      # 补丁: (1) Cargo.toml 把 sighook 依赖限定到非 loongarch64;
+      #       (2) proxy/mod.rs 为 loong64 提供返回 Err 的桩函数,
+      #           行为等同运行时 DISABLE_DISPLAY_SERVER_HOOKS=1 优雅降级
+      #           (窗口拖动/输入区域等常规功能不受影响, 仅 Wayland 光标
+      #           捕获等 hook 类功能在 loong64 上不可用), 不影响 x64 构建。
+      - name: 补丁 window 模块 (sighook 不支持 loong64)
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib
+
+          cargo = pathlib.Path("modules/window/Cargo.toml")
+          s = cargo.read_text()
+          old = """[target.'cfg(target_os = "linux")'.dependencies]
+          libc = "0.2.182"
+          sighook = "0.10.0"
+          """.replace("\n          ", "\n")
+          new = """[target.'cfg(target_os = "linux")'.dependencies]
+          libc = "0.2.182"
+
+          [target.'cfg(all(target_os = "linux", not(target_arch = "loongarch64")))'.dependencies]
+          sighook = "0.10.0"
+          """.replace("\n          ", "\n")
+          if old not in s:
+              raise SystemExit("!! Cargo.toml 锚点未找到, 上游结构可能已变化")
+          cargo.write_text(s.replace(old, new))
+
+          proxy = pathlib.Path("modules/window/src/linux/proxy/mod.rs")
+          s = proxy.read_text()
+          old = "use sighook::{inline_hook_jump, unhook};"
+          new = """#[cfg(not(target_arch = "loongarch64"))]
+          use sighook::{inline_hook_jump, unhook};
+
+          // loong64: sighook 未支持此架构, 提供桩函数使 hook 安装失败并
+          // 优雅降级 (等同 DISABLE_DISPLAY_SERVER_HOOKS=1 的行为)。
+          #[cfg(target_arch = "loongarch64")]
+          fn inline_hook_jump(_addr: u64, _replace_fn: u64) -> Result<u32, String> {
+              Err("inline hooking is unsupported on loong64".to_string())
+          }
+
+          #[cfg(target_arch = "loongarch64")]
+          fn unhook(_addr: u64) -> bool {
+              false
+          }
+          """.replace("\n          ", "\n")
+          if old not in s:
+              raise SystemExit("!! proxy/mod.rs 锚点未找到, 上游结构可能已变化")
+          proxy.write_text(s.replace(old, new))
+          print("==> window 模块 loong64 补丁已应用")
+          PYEOF
 
       # ---------- 4. 交叉编译 napi 模块（database / dbus / window） ----------
       # cargo zigbuild 产出 lib<name>.so，按 napi 命名约定改名为
