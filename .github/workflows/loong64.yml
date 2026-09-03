@@ -125,26 +125,26 @@ jobs:
           # 修改为: sighook 仅在 x86/x86_64 上可用
           old_deps = '[target.\'cfg(target_os = "linux")\'.dependencies]\nlibc = "0.2.182"\nsighook = "0.10.0"'
           new_deps = '''[target.'cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "x86")))'.dependencies]
-libc = "0.2.182"
-sighook = "0.10.0"
+          libc = "0.2.182"
+          sighook = "0.10.0"
 
-# loong64 等 non-x86 架构仅需要 libc，不需要 sighook
-[target.'cfg(all(target_os = "linux", not(any(target_arch = "x86_64", target_arch = "x86"))))'.dependencies]
-libc = "0.2.182"'''
-
-          if old_deps in cargo:
-              cargo = cargo.replace(old_deps, new_deps)
-          else:
-              # Fallback: 用正则替换
-              cargo = re.sub(
-                  r'\[target\.\'cfg\(target_os = "linux"\)\'\.dependencies\]\nlibc = "[^"]+"\nsighook = "[^"]+"',
-                  new_deps,
-                  cargo,
-              )
-
-          with open(cargo_path, "w") as f:
-              f.write(cargo)
-          print("Patched modules/window/Cargo.toml — sighook gated to x86/x86_64")
+          # loong64 等 non-x86 架构仅需要 libc，不需要 sighook
+          [target.'cfg(all(target_os = "linux", not(any(target_arch = "x86_64", target_arch = "x86"))))'.dependencies]
+          libc = "0.2.182"'''
+          
+                    if old_deps in cargo:
+                        cargo = cargo.replace(old_deps, new_deps)
+                    else:
+                        # Fallback: 用正则替换
+                        cargo = re.sub(
+                            r'\[target\.\'cfg\(target_os = "linux"\)\'\.dependencies\]\nlibc = "[^"]+"\nsighook = "[^"]+"',
+                            new_deps,
+                            cargo,
+                        )
+          
+                    with open(cargo_path, "w") as f:
+                        f.write(cargo)
+                    print("Patched modules/window/Cargo.toml — sighook gated to x86/x86_64")
 
           # ── 2. linux.rs: 用 cfg gate 包裹 proxy 模块引用 ──
           #
