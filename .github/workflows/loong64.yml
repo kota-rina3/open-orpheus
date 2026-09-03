@@ -15,6 +15,19 @@
 #   4. AppImage / Flatpak / Rpm 三个 maker 在 loong64 下不可用
 #      (appimagetool 无 loong64 二进制等)，因此只用 `electron-forge package`
 #      产出目录，再手动打成 tar.gz（或后续改用 maker-deb）。
+#   5. 两个构建期原生依赖缺 loong64 二进制, 需装 WASM 回退(见步骤 7.5):
+#        - rolldown(vite8/tsdown 依赖): 无 loong64, WASM 回退 @rolldown/binding-wasm32-wasi
+#        - @tailwindcss/oxide(Tailwind v4 依赖): 无 loong64, WASM 回退 @tailwindcss/oxide-wasm32-wasi
+#      而 esbuild(@esbuild/linux-loong64) 与 unrs-resolver(loongarch64-unknown-linux-gnu)
+#      均已原生支持 loong64, 无需处理。
+#   6. 两个"运行时"原生依赖的处理(见步骤 7.6 / 7.7):
+#        - music-tag-native(napi-rs, 读音乐标签): 无 loong64 原生二进制, 但 napi loader
+#          找不到原生二进制时会自动回退 require("music-tag-native-wasm32-wasi")。
+#          该 WASI 包已发布且版本须与主包一致, 需显式安装到 dependencies(而非 -D),
+#          否则 electron-forge 打包不会带入应用, 运行时直接崩。
+#        - @silvia-odwyer/photon-node(图像处理): 实为 wasm-bindgen 产物
+#          (photon_rs.js + photon_rs_bg.wasm), 纯 WebAssembly、架构无关, loong64 可直接跑,
+#          无需任何处理(仅做冒烟自检)。
 
 name: 编译 open-orpheus (loong64 / deepin 25)
 
@@ -120,6 +133,65 @@ jobs:
 
               # ---------- 7. 安装依赖 ----------
               pnpm install --no-frozen-lockfile
+
+              # ---------- 7.5 给缺 loong64 原生二进制的构建期依赖安装 WASM 回退 ----------
+              # 说明: rolldown(vite8/tsdown 依赖) 与 @tailwindcss/oxide(Tailwind v4 依赖)
+              # 官方均未发布 loong64 原生二进制, 但其 napi 加载器在找不到原生二进制时
+              # 会自动回退到 WASM 构建。rolldown 的 WASM 回退包甚至不在 optionalDependencies
+              # 里, 必须显式安装; tailwind oxide 的在 optionalDependencies 里但 pnpm 不会
+              # 默认装到 loong64。这里按实际解析到的版本安装匹配的 -wasm32-wasi 包,
+              # 加 -D 使其作为 devDependency, 不会打进最终应用包。
+              # (Node 24 的 WASI 已稳定, 不再需要 --experimental-wasi-unstable-preview1 标志)
+
+              ROLLDOWN_VERSION=$(node -p "JSON.parse(require('fs').readFileSync(require.resolve('rolldown/package.json'),'utf8')).version" 2>/dev/null || echo "")
+              OXIDE_VERSION=$(node -p "JSON.parse(require('fs').readFileSync(require.resolve('@tailwindcss/oxide/package.json'),'utf8')).version" 2>/dev/null || echo "")
+              echo "==> 已解析版本: rolldown@${ROLLDOWN_VERSION} | @tailwindcss/oxide@${OXIDE_VERSION}"
+
+              WASM_PKGS=""
+              [ -n "$ROLLDOWN_VERSION" ] && WASM_PKGS="$WASM_PKGS @rolldown/binding-wasm32-wasi@${ROLLDOWN_VERSION}"
+              [ -n "$OXIDE_VERSION" ] && WASM_PKGS="$WASM_PKGS @tailwindcss/oxide-wasm32-wasi@${OXIDE_VERSION}"
+
+              if [ -n "$WASM_PKGS" ]; then
+                echo "==> 安装 WASM 回退包:${WASM_PKGS}"
+                # shellcheck disable=SC2086
+                pnpm add -D -w $WASM_PKGS
+              else
+                echo "==> 未检测到需要 WASM 回退的依赖, 跳过"
+              fi
+
+              # ---------- 7.6 运行时原生依赖的 loong64 处理 ----------
+              # music-tag-native(napi-rs): 无 loong64 原生二进制, 但 napi loader 在
+              # 找不到原生二进制时会自动回退 require("music-tag-native-wasm32-wasi")。
+              # 该 WASI 包已发布, 版本须与主包一致。注意必须装到 dependencies(不用 -D),
+              # 否则 electron-forge 打包时不会把它带入应用包, 运行时 require 会失败。
+              # (music-tag-native 本身在根 dependencies 里, 这里 -w 加到根 package.json)
+              MUSICTAG_VERSION=$(node -p "JSON.parse(require('fs').readFileSync(require.resolve('music-tag-native/package.json'),'utf8')).version" 2>/dev/null || echo "")
+              if [ -n "$MUSICTAG_VERSION" ]; then
+                echo "==> 安装 music-tag-native 的 WASI 回退: music-tag-native-wasm32-wasi@${MUSICTAG_VERSION}"
+                pnpm add -w "music-tag-native-wasm32-wasi@${MUSICTAG_VERSION}"
+              else
+                echo "==> 未检测到 music-tag-native, 跳过"
+              fi
+
+              # ---------- 7.7 运行时原生模块冒烟自检 ----------
+              # 打包前确认两个运行时依赖都能真正加载:
+              #   - music-tag-native 通过 WASI 回退加载
+              #   - @silvia-odwyer/photon-node 通过其内置 photon_rs_bg.wasm 加载
+              # 若失败则直接中断(比运行时才暴露强)。QEMU 模拟下 WASM 实例化较慢但可跑。
+              node -e "
+                const mods = ['music-tag-native', '@silvia-odwyer/photon-node'];
+                let ok = true;
+                for (const m of mods) {
+                  try {
+                    const x = require(m);
+                    console.log('SMOKE OK   ' + m + ' -> ' + typeof x);
+                  } catch (e) {
+                    ok = false;
+                    console.error('SMOKE FAIL ' + m + ': ' + (e && e.message));
+                  }
+                }
+                if (!ok) process.exit(1);
+              "
 
               # ---------- 8. 编译 Rust 模块（napi 原生 + WASM） ----------
               # modules/*: database/window/ui/dbus/smtc/nowplaying 用 napi 3.0 编译
