@@ -1,6 +1,6 @@
 # ============================================================================
 # open-orpheus 龙芯 (loong64 / LoongArch) 编译流水线 —— v3: 宿主机交叉编译方案
-# 目标系统: deepin 25 (crimson) | Electron: darkyzhou 移植 v42.3.0
+# 目标系统: deepin 25 (crimson) | Electron: darkyzhou 移植版（以 env.ELECTRON_VERSION 为准）
 # ============================================================================
 #
 # 【为何不再在 QEMU 容器里构建】
@@ -21,10 +21,10 @@
 #
 # 【关键事实 / 需知】
 #   1. 项目 pin 了 electron@43.3.0, 但 loong64 移植(darkyzhou/electron-loong64)
-#      最高只有 v42.3.0, 必须降级。
+#      必须从 darkyzhou 镜像拉取 loong64 二进制(项目原为 43.3.0, 镜像可能有滞后)。
 #   2. @electron/packager 官方架构白名单不含 loong64; 只有当
 #      packagerConfig.download.mirrorOptions 存在时才跳过校验。注意 customDir
-#      必须是 "v42.3.0"(release 目录带 v 前缀, @electron/get 默认目录不带)。
+#      必须是 "v${ELECTRON_VERSION}"(release 目录带 v 前缀, @electron/get 默认目录不带)。
 #      该 release 同时提供 SHASUMS256.txt, 可用远程校验。
 #   3. napi 模块(database/dbus/window)与 music-tag-native 均为纯 Rust 或
 #      带内嵌 C(database 的 rusqlite bundled sqlite, 由 zig cc 交叉编译),
@@ -59,8 +59,7 @@ on:
 env:
   NODE_VERSION: 24.20.0          # loong64 node, 仅用于容器内冒烟测试
   PNPM_VERSION: 11.20.0          # 与 package.json 的 packageManager 一致
-  ELECTRON_VERSION: 42.3.0       # loong64 移植最高版本（项目原为 43.3.0，需降级）
-  WASM_BINDGEN_VERSION: 0.2.123  # 与根 Cargo.toml 中 wasm-bindgen 版本一致
+  ELECTRON_VERSION: 43.4.1       # darkyzhou 移植版（项目原为 43.3.0）
   ELECTRON_MIRROR: https://github.com/darkyzhou/electron-loong64/releases/download/
   CROSS_TARGET: loongarch64-unknown-linux-gnu
   # cargo-zigbuild 支持在 target 后追加 glibc 版本下限
@@ -91,7 +90,9 @@ jobs:
           pnpm -v
 
       # ---------- 1. Rust 工具链 + 交叉目标 + wasm-bindgen ----------
-      # wasm-bindgen-cli 供 audio-effect 模块在宿主机处理 wasm 产物（架构无关）
+      # wasm-bindgen-cli 供 audio-effect 模块在宿主机处理 wasm 产物（架构无关）。
+      # 版本必须与 audio-effect crate 依赖的 wasm-bindgen 完全一致（schema 版本
+      # 不向前兼容），因此从仓库根 Cargo.lock 动态解析，而不是硬编码常量。
       - name: 安装 Rust 工具链
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
@@ -100,9 +101,20 @@ jobs:
           rustc -V
           rustup target add loongarch64-unknown-linux-gnu wasm32-unknown-unknown
 
-      - name: 安装 wasm-bindgen-cli
+      - name: 安装 wasm-bindgen-cli（跟随 Cargo.lock 解析到的版本）
         run: |
-          cargo install wasm-bindgen-cli --version "${WASM_BINDGEN_VERSION}" --locked
+          set -euo pipefail
+          # 从仓库根 Cargo.lock 解析 wasm-bindgen 版本（audio-effect 引用的版本）
+          WB_VERSION=$(awk '
+            /^name = "wasm-bindgen"$/ { flag = 1; next }
+            flag && /^version/ { sub(/^[^"]*"/, ""); sub(/"$/, ""); print; exit }
+          ' Cargo.lock)
+          if [ -z "${WB_VERSION}" ]; then
+            echo "!! Cargo.lock 中未找到 wasm-bindgen 条目"
+            exit 1
+          fi
+          echo "==> wasm-bindgen 版本: ${WB_VERSION}"
+          cargo install wasm-bindgen-cli --version "${WB_VERSION}" --locked
           wasm-bindgen --version
 
       # ---------- 2. zig + cargo-zigbuild（交叉编译核心） ----------
@@ -251,7 +263,7 @@ jobs:
       # ---------- 8. 给 forge.config.ts 注入 mirrorOptions ----------
       # 作用: (a) 绕过 @electron/packager 的 loong64 架构白名单校验;
       #       (b) 让 @electron/get 从 darkyzhou 镜像下载 electron loong64 zip。
-      # customDir 用 "v42.3.0"（release 目录带 v 前缀）。
+      # customDir 用 "v${ELECTRON_VERSION}"（release 目录带 v 前缀）。
       - name: 注入 Electron 镜像配置
         run: |
           node -e '
@@ -280,7 +292,7 @@ jobs:
 
       # ---------- 9. electron-forge 打包（loong64） ----------
       # vite 主/预加载/渲染进程构建全部在 x64 宿主机原生完成，产物为平台无关
-      # 的 JS/CSS；打包时下载 electron-v42.3.0-linux-loong64.zip 并替换架构。
+      # 的 JS/CSS；打包时下载 electron-v${ELECTRON_VERSION}-linux-loong64.zip 并替换架构。
       - name: electron-forge 打包 (linux / loong64)
         timeout-minutes: 60
         env:
