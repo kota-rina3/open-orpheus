@@ -15,6 +15,10 @@ export interface SpecOptions {
   homepage: string;
   nodeVersion: string;
   wasmBindgen: string;
+  /** `cargo-zigbuild` version installed alongside wasm-bindgen. */
+  cargoZigbuild: string;
+  /** Zig version required by `cargo-zigbuild`. */
+  zig: string;
   changelog: string;
   /** Install the build toolchain (rust/node/pnpm) inside `%build`. Defaults to true. */
   installTools?: boolean;
@@ -24,10 +28,18 @@ export interface SpecOptions {
 
 export async function generateSpec(options: SpecOptions) {
   return new Promise<string>((resolve, reject) => {
-    ejs.renderFile(template, options, (err, result) => {
-      if (err) reject(err);
-      else resolve(result);
-    });
+    ejs.renderFile(
+      template,
+      {
+        ...options,
+        installTools: options.installTools ?? true,
+        prebuilt: options.prebuilt ?? false,
+      },
+      (err, result) => {
+        if (err) reject(err);
+        else resolve(result);
+      }
+    );
   });
 }
 

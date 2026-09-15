@@ -1,7 +1,7 @@
 {
   "name": "open-orpheus",
   "productName": "open-orpheus",
-  "version": "0.17.0",
+  "version": "0.17.1",
   "description": "An open-source implementation of Netease Cloud Music's Orpheus browser host.",
   "type": "module",
   "main": ".vite/build/main.js",
@@ -21,7 +21,9 @@
     "lint:types:root": "tsc --noEmit -p tsconfig.json",
     "lint:types:gui": "pnpm --dir gui check",
     "format": "prettier --write .",
-    "build:modules": "node scripts/build-modules.ts"
+    "build:modules": "node scripts/build-modules.ts",
+    "test": "vitest run",
+    "coverage": "vitest run --coverage"
   },
   "keywords": [],
   "author": {
@@ -54,6 +56,7 @@
     "@types/unzipper": "^0.10.11",
     "@typescript-eslint/eslint-plugin": "^8.70.0",
     "@typescript-eslint/parser": "^8.70.0",
+    "@vitest/coverage-v8": "4.1.11",
     "@webtoon/psd": "^0.4.0",
     "@xmldom/xmldom": "^0.9.12",
     "@yxim/nim-web-sdk": "^9.21.14",
