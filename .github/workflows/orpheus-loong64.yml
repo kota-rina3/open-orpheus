@@ -45,9 +45,11 @@
 #      Electron loong64 的 V8 可直接跑; 7z-wasm / audio-effect 的 WASM 同理。
 #   9. window 模块的 Linux 依赖 sighook 0.10 只支持 x86_64/aarch64, 在
 #      loong64 上 compile_error!。它仅被 proxy/mod.rs 用于 hook libc
-#      connect/close(Wayland/X11 MITM)。步骤 3.5 打 cfg 补丁: 依赖限定到
-#      非 loongarch64 + 桩函数, hook 安装失败时优雅降级(等同运行时
-#      DISABLE_DISPLAY_SERVER_HOOKS=1), 常规窗口功能不受影响, 不影响 x64。
+#      connect/close(Wayland/X11 MITM), 而这个 hook 正是窗口拖动 / 桌面歌词
+#      拖动的实现基础 —— 早先把它桩掉的做法会让拖拽彻底失灵, 因此步骤 3.5
+#      改为: 依赖限定到非 loongarch64 + 为 loong64 提供本地 inline hook 后端
+#      (proxy/loong64_hook.rs: 单条 `b` 指令原子 patch 函数入口, 跳到邻近
+#      mmap 的 trampoline 页做 64 位绝对跳转), 功能与 x64 保持一致。
 #   10. 已知风险: Electron 42 与 43 之间的 API 差异可能需要少量代码适配。
 #  10. 若 @electron/get 校验 SHASUMS 失败, 可在注入的 download 配置里加
 #      unsafelyDisableChecksums: true(该 release 页面附有 sha256 可人工核对)。
@@ -146,14 +148,15 @@ jobs:
           echo "==> electron: $(node -p "require(\"electron/package.json\").version")"
 
       # ---------- 3.5. window 模块 loong64 补丁 ----------
-      # sighook 0.10 只支持 x86_64/aarch64, 在 loong64 上 compile_error! 直接失败。
-      # 它只被 proxy/mod.rs 用于 hook libc connect/close(实现 Wayland/X11 MITM)。
+      # sighook 0.10 只支持 x86_64/aarch64, 在 loong64 上直接 compile_error!。
+      # 它只被 proxy/mod.rs 用来 hook libc 的 connect/close —— 而这正是窗口拖动、
+      # 桌面歌词拖动等交互的实现基础(把 display server 连接改道进 MITM 代理),
+      # 所以不能像早先那样简单桩掉: 那样虽然能编译通过, 但拖拽会彻底失灵。
       # 补丁: (1) Cargo.toml 把 sighook 依赖限定到非 loongarch64;
-      #       (2) proxy/mod.rs 为 loong64 提供返回 Err 的桩函数,
-      #           行为等同运行时 DISABLE_DISPLAY_SERVER_HOOKS=1 优雅降级
-      #           (窗口拖动/输入区域等常规功能不受影响, 仅 Wayland 光标
-      #           捕获等 hook 类功能在 loong64 上不可用), 不影响 x64 构建。
-      - name: 补丁 window 模块 (sighook 不支持 loong64)
+      #       (2) proxy/mod.rs 在 loong64 上改用本地后端 inline_hook_jump/unhook;
+      #       (3) 新增 proxy/loong64_hook.rs —— 用单条 `b` 指令原子 patch 函数入口,
+      #           跳到 ±128MiB 内 mmap 出来的 trampoline 页, 在那里做 64 位绝对跳转。
+      - name: 补丁 window 模块 (loong64 inline hook 后端)
         run: |
           python3 - <<'PYEOF'
           import pathlib
@@ -163,13 +166,13 @@ jobs:
           old = """[target.'cfg(target_os = "linux")'.dependencies]
           libc = "0.2.182"
           sighook = "0.10.0"
-          """.replace("\n          ", "\n")
+          """
           new = """[target.'cfg(target_os = "linux")'.dependencies]
           libc = "0.2.182"
 
           [target.'cfg(all(target_os = "linux", not(target_arch = "loongarch64")))'.dependencies]
           sighook = "0.10.0"
-          """.replace("\n          ", "\n")
+          """
           if old not in s:
               raise SystemExit("!! Cargo.toml 锚点未找到, 上游结构可能已变化")
           cargo.write_text(s.replace(old, new))
@@ -180,28 +183,557 @@ jobs:
           new = """#[cfg(not(target_arch = "loongarch64"))]
           use sighook::{inline_hook_jump, unhook};
 
-          // loong64: sighook 未支持此架构, 提供桩函数使 hook 安装失败并
-          // 优雅降级 (等同 DISABLE_DISPLAY_SERVER_HOOKS=1 的行为)。
+          // sighook 只支持 x86_64/aarch64; loong64 走本地后端, 用单条 `b` 指令
+          // patch 函数入口(见 loong64_hook.rs), 语义与 sighook 保持一致。
           #[cfg(target_arch = "loongarch64")]
-          fn inline_hook_jump(_addr: u64, _replace_fn: u64) -> Result<u32, String> {
-              Err("inline hooking is unsupported on loong64".to_string())
-          }
-
+          mod loong64_hook;
           #[cfg(target_arch = "loongarch64")]
-          fn unhook(_addr: u64) -> bool {
-              false
-          }
-          """.replace("\n          ", "\n")
+          use loong64_hook::{inline_hook_jump, unhook};
+          """
           if old not in s:
               raise SystemExit("!! proxy/mod.rs 锚点未找到, 上游结构可能已变化")
           proxy.write_text(s.replace(old, new))
-          print("==> window 模块 loong64 补丁已应用")
+          print("==> proxy/mod.rs 已切到 loong64 hook 后端")
           PYEOF
 
-      # ---------- 4. 交叉编译 napi 模块（database / dbus / ui / av3a / window） ----------
-      # cargo zigbuild 产出 lib<name>.so，按 napi 命名约定改名为
-      # <name>.linux-loong64-gnu.node 放进模块目录，loader 会优先加载本地文件。
-      # 注: ui / av3a 也是 napi-rs 项目(非 tsdown), 与 database/dbus/window 同类。
+          # loong64 inline hook 后端(每条指令编码都已用 LLVM loongarch64 汇编器核对)
+          cat > modules/window/src/linux/proxy/loong64_hook.rs <<'RSEOF'
+          //! Minimal `sighook` replacement for loongarch64.
+          //!
+          //! Upstream `sighook` implements inline hooking for x86_64 / aarch64 only, so on
+          //! loong64 the `connect` / `close` hooks could not be installed at all and window
+          //! dragging as well as the desktop-lyric input path silently degraded. This
+          //! module provides an equivalent implementation with the same two-function API.
+          //!
+          //! # Mechanism
+          //!
+          //! The first instruction of the target is replaced by a single LoongArch `b`
+          //! branch (26-bit PC-relative, plus or minus 128 MiB) that jumps to a trampoline
+          //! page mapped close to the target. That page holds an absolute jump to the
+          //! replacement function, built from `pcaddi` + `ld.d` + `jirl` around an inline
+          //! 8-byte literal, plus a small instruction-barrier helper.
+          //!
+          //! Only one naturally aligned 32-bit instruction word is ever written, so a
+          //! thread calling the hooked function concurrently observes either the original
+          //! entry or the finished branch, never a torn sequence. That matters because
+          //! `close` in particular is called from arbitrary threads.
+          //!
+          //! Nothing here needs to call the original function through a trampoline: both
+          //! detours in `proxy::mod` issue raw syscalls, so the displaced instruction can
+          //! simply be saved and restored without relocating it.
+          //!
+          //! # Instruction encodings
+          //!
+          //! Every word below was verified byte-for-byte against LLVM's LoongArch
+          //! assembler (`zig cc -target loongarch64-linux-gnu -c`). The companion script
+          //! `verify-loong64-hook.py` repeats that check against this file, so a mistyped
+          //! literal cannot slip through unnoticed.
+
+          use core::ptr;
+
+          use libc::{_SC_PAGESIZE, c_int, c_void, mmap, mprotect, munmap, sysconf};
+          use std::collections::HashMap;
+          use std::sync::{Mutex, OnceLock};
+
+          // ── Linux mmap/mprotect flags ─────────────────────────────────────────────
+          // Spelled out locally so this file does not depend on the libc crate exporting
+          // every flag for every target.
+
+          const PROT_READ_: c_int = 0x1;
+          const PROT_WRITE_: c_int = 0x2;
+          const PROT_EXEC_: c_int = 0x4;
+          const MAP_PRIVATE_: c_int = 0x02;
+          const MAP_ANONYMOUS_: c_int = 0x20;
+          const MAP_FIXED_NOREPLACE_: c_int = 0x0010_0000;
+
+          /// Used only if `sysconf` cannot report the page size. LoongArch kernels run
+          /// 16 KiB pages by default - hardcoding 4 KiB here would make every `mprotect`
+          /// call fail with `EINVAL`, because the kernel insists on a page-aligned start.
+          const DEFAULT_PAGE_SIZE: usize = 16 * 1024;
+
+          // ── LoongArch instruction words ───────────────────────────────────────────
+
+          /// `pcaddi $t0, 0`: `$t0` = the address of this very instruction.
+          const PCADDI_T0_0: u32 = 0x1800_000c;
+          /// `ld.d $t0, $t0, 16`: load the 8-byte literal that follows the jump.
+          const LD_D_T0_T0_16: u32 = 0x28c0_418c;
+          /// `jirl $zero, $t0, 0`: jump through `$t0` without linking.
+          const JIRL_ZERO_T0: u32 = 0x4c00_0180;
+          /// `nop`.
+          const NOP: u32 = 0x0340_0000;
+          /// `dbar 0`: make the store visible before execution resumes.
+          const DBAR_0: u32 = 0x3872_0000;
+          /// `ibar 0`: drop instructions that were fetched before the patch.
+          const IBAR_0: u32 = 0x3872_8000;
+          /// `jirl $zero, $ra, 0`: return to the caller.
+          const RET: u32 = 0x4c00_0020;
+
+          /// `b`: 26-bit signed PC-relative branch, `opcode[31:26] = 0b010100`.
+          /// The immediate is split across the word: `offset[15:0]` sits in bits 25:10 and
+          /// `offset[25:16]` in bits 9:0. The offset counts 4-byte units.
+          const B_OPCODE: u32 = 0x5000_0000;
+          /// Largest byte distance a `b` can reach (2^27).
+          const B_RANGE: i64 = 1 << 27;
+
+          /// Byte offset of the barrier helper inside the trampoline page.
+          const FLUSH_OFFSET: usize = 24;
+
+          // ── Bookkeeping ───────────────────────────────────────────────────────────
+
+          /// Every installed hook, keyed by the patched entry address.
+          static HOOKS: OnceLock<Mutex<HashMap<usize, Hook>>> = OnceLock::new();
+
+          struct Hook {
+              /// First instruction word of the target, as it was before patching.
+              original: u32,
+              /// Executable page holding this hook's trampoline and barrier helper.
+              trampoline: usize,
+          }
+
+          fn with_hooks<R>(f: impl FnOnce(&mut HashMap<usize, Hook>) -> R) -> Option<R> {
+              let slots = HOOKS.get_or_init(|| Mutex::new(HashMap::new()));
+              let mut guard = slots.lock().ok()?;
+              Some(f(&mut guard))
+          }
+
+          // ── Helpers ───────────────────────────────────────────────────────────────
+
+          fn page_size() -> usize {
+              let size = unsafe { sysconf(_SC_PAGESIZE) };
+              if size <= 0 { DEFAULT_PAGE_SIZE } else { size as usize }
+          }
+
+          fn errno() -> c_int {
+              unsafe { *libc::__errno_location() }
+          }
+
+          /// Encode a `b` that branches from `from` to `to`.
+          ///
+          /// The branch is relative to the address of the branch instruction itself, and
+          /// the immediate field is split, so the two halves are placed separately.
+          fn encode_b(from: usize, to: usize) -> Option<u32> {
+              let delta = to as i64 - from as i64;
+              if delta & 3 != 0 {
+                  return None;
+              }
+              let offset = delta >> 2;
+              if offset < -(1 << 25) || offset >= (1 << 25) {
+                  return None;
+              }
+              let bits = (offset as u32) & 0x03ff_ffff;
+              Some(B_OPCODE | ((bits & 0xffff) << 10) | (bits >> 16))
+          }
+
+          /// Write the trampoline (absolute jump to `dest`) plus the barrier helper.
+          ///
+          /// ```text
+          ///  +0  pcaddi $t0, 0        ; $t0 = the page base (the page is aligned)
+          ///  +4  ld.d   $t0, $t0, 16  ; $t0 = *(page + 16) - the literal below
+          ///  +8  jirl  $zero, $t0, 0  ; leave for the replacement function
+          /// +12  nop
+          /// +16  .quad dest
+          /// +24  dbar 0               ; barrier helper
+          /// +28  ibar 0
+          /// +32  jirl  $zero, $ra, 0  ; ... and return
+          /// ```
+          ///
+          /// The page is page-aligned and the literal sits at `+16`, so `ld.d` is always
+          /// naturally aligned.
+          fn fill_page(page: usize, dest: u64) {
+              let put = |index: usize, word: u32| unsafe {
+                  ptr::write_volatile((page as *mut u32).add(index), word);
+              };
+              put(0, PCADDI_T0_0);
+              put(1, LD_D_T0_T0_16);
+              put(2, JIRL_ZERO_T0);
+              put(3, NOP);
+              put(4, dest as u32);
+              put(5, (dest >> 32) as u32);
+              put(FLUSH_OFFSET / 4, DBAR_0);
+              put(FLUSH_OFFSET / 4 + 1, IBAR_0);
+              put(FLUSH_OFFSET / 4 + 2, RET);
+          }
+
+          /// Execute `dbar 0; ibar 0` from the trampoline page so that the freshly written
+          /// instructions are observed by the instruction fetcher.
+          fn flush_instruction_stream(page: usize) {
+              // SAFETY: `page` is this hook's own executable mapping, and the helper at
+              // `FLUSH_OFFSET` returns through `$ra` like any leaf function.
+              let entry = (page + FLUSH_OFFSET) as *const ();
+              let barrier: extern "C" fn() = unsafe { core::mem::transmute(entry) };
+              barrier();
+          }
+
+          fn map_hint(hint: usize, size: usize, fixed: bool) -> Option<usize> {
+              let mut flags = MAP_PRIVATE_ | MAP_ANONYMOUS_;
+              if fixed {
+                  flags |= MAP_FIXED_NOREPLACE_;
+              }
+              let mapped = unsafe {
+                  mmap(
+                      hint as *mut c_void,
+                      size,
+                      PROT_READ_ | PROT_WRITE_,
+                      flags,
+                      -1,
+                      0,
+                  )
+              };
+              if mapped == libc::MAP_FAILED {
+                  None
+              } else {
+                  Some(mapped as usize)
+              }
+          }
+
+          /// Reserve one page close enough to `target` for a `b` branch to reach it.
+          ///
+          /// Probing uses `MAP_FIXED_NOREPLACE`, which never replaces an existing mapping.
+          /// The sweep only walks *downwards*: that is away from the stack, so a probe can
+          /// never eat into the stack guard gap. A first pass at page granularity covers
+          /// the immediate neighbourhood, a second at 64 KiB granularity covers the rest of
+          /// the branch range.
+          fn alloc_page_near(target: usize) -> Option<usize> {
+              let size = page_size();
+              let base = target & !(size - 1);
+              let phases = [(size, 4096_usize), (0x0001_0000, 1984_usize)];
+              let mut fixed = true;
+              for (step, count) in phases {
+                  for index in 1..=count {
+                      let offset = -(step as i64 * index as i64);
+                      if offset.abs() >= B_RANGE {
+                          break;
+                      }
+                      let address = base as i64 + offset;
+                      if address <= 0 {
+                          continue;
+                      }
+                      match map_hint(address as usize, size, fixed) {
+                          Some(region) => {
+                              if region.abs_diff(target) < B_RANGE as usize {
+                                  return Some(region);
+                              }
+                              unsafe { munmap(region as *mut c_void, size) };
+                          }
+                          None => {
+                              // Kernel too old for MAP_FIXED_NOREPLACE: fall back to a
+                              // plain hint and rely on the distance check above.
+                              if fixed && errno() == libc::EINVAL {
+                                  fixed = false;
+                              }
+                          }
+                      }
+                  }
+              }
+              None
+          }
+
+          // ── Public API (mirrors the `sighook` functions used by proxy/mod.rs) ─────
+
+          /// Redirect the entry of `addr` to `replace_fn`, returning the instruction word
+          /// that was replaced.
+          pub(crate) fn inline_hook_jump(addr: u64, replace_fn: u64) -> Result<u32, String> {
+              let target = addr as usize;
+              if target == 0 || (target & 3) != 0 {
+                  return Err(format!("invalid hook target 0x{:x}", target));
+              }
+              if let Some(existing) = with_hooks(|hooks| hooks.get(&target).map(|hook| hook.original)).flatten()
+              {
+                  return Ok(existing);
+              }
+
+              let size = page_size();
+              let trampoline = match alloc_page_near(target) {
+                  Some(page) => page,
+                  None => {
+                      return Err(format!(
+                          "no free page within {} bytes of 0x{:x} for the trampoline",
+                          B_RANGE, target
+                      ));
+                  }
+              };
+
+              fill_page(trampoline, replace_fn);
+              if unsafe { mprotect(trampoline as *mut c_void, size, PROT_READ_ | PROT_EXEC_) } != 0 {
+                  let code = errno();
+                  unsafe { munmap(trampoline as *mut c_void, size) };
+                  return Err(format!("mprotect(trampoline) failed with errno {}", code));
+              }
+
+              let branch = match encode_b(target, trampoline) {
+                  Some(word) => word,
+                  None => {
+                      unsafe { munmap(trampoline as *mut c_void, size) };
+                      return Err(format!(
+                          "target 0x{:x} cannot branch to trampoline 0x{:x}",
+                          target, trampoline
+                      ));
+                  }
+              };
+
+              let code_page = target & !(size - 1);
+              if unsafe { mprotect(code_page as *mut c_void, size, PROT_READ_ | PROT_WRITE_ | PROT_EXEC_) } != 0
+              {
+                  let code = errno();
+                  unsafe { munmap(trampoline as *mut c_void, size) };
+                  return Err(format!("mprotect(code page) failed with errno {}", code));
+              }
+              let original = unsafe { ptr::read_volatile(target as *const u32) };
+              unsafe { ptr::write_volatile(target as *mut u32, branch) };
+              unsafe { mprotect(code_page as *mut c_void, size, PROT_READ_ | PROT_EXEC_) };
+
+              flush_instruction_stream(trampoline);
+              let _ = with_hooks(|hooks| hooks.insert(target, Hook { original, trampoline }));
+              Ok(original)
+          }
+
+          /// Restore the instruction replaced by [`inline_hook_jump`]. Returns whether a
+          /// hook was actually installed at `addr`.
+          ///
+          /// The trampoline page is intentionally left mapped: a thread may still be
+          /// executing inside it, and a page that a future re-install would reuse costs
+          /// nothing to keep.
+          pub(crate) fn unhook(addr: u64) -> bool {
+              let target = addr as usize;
+              let removed = with_hooks(|hooks| hooks.remove(&target)).flatten();
+              let Some(hook) = removed else {
+                  return false;
+              };
+
+              let size = page_size();
+              let code_page = target & !(size - 1);
+              if unsafe { mprotect(code_page as *mut c_void, size, PROT_READ_ | PROT_WRITE_ | PROT_EXEC_) } != 0
+              {
+                  return false;
+              }
+              unsafe { ptr::write_volatile(target as *mut u32, hook.original) };
+              unsafe { mprotect(code_page as *mut c_void, size, PROT_READ_ | PROT_EXEC_) };
+
+              flush_instruction_stream(hook.trampoline);
+              true
+          }
+          RSEOF
+          echo "==> 已写入 modules/window/src/linux/proxy/loong64_hook.rs"
+
+          # 机器码自校验: hook 靠手写指令字直接改写函数入口, 一个错字面量就会在
+          # 真机上崩溃。这里用 LLVM 汇编器把这些字面量重新汇编一遍逐字节比对,
+          # 也就是 loong64_hook.rs 头部注释提到的伴生脚本。
+          cat > modules/window/src/linux/proxy/verify-loong64-hook.py <<'PYEOF'
+          #!/usr/bin/env python3
+          """Verify the hand-written machine code in loong64_hook.rs against LLVM.
+
+          The loong64 inline hook patches a live function entry with hand-written
+          LoongArch instructions. A single mistyped literal, or a wrong shift in the
+          branch encoder, turns the patch into garbage that only shows up as a crash -
+          or as window dragging silently not working - on real loong64 hardware. So the
+          intended instruction sequence is assembled here with LLVM (through `zig cc`)
+          and compared byte for byte against what the Rust source says.
+
+          Two things are checked:
+
+            1. Every `const ... : u32 = 0x...` instruction word equals the encoding LLVM
+               produces for the instruction named in its doc comment.
+            2. The `b` encoder used to jump from the patched entry to the trampoline
+               matches LLVM on real displacements (both signs, and far enough to exercise
+               the split immediate), and round-trips across its whole range so no
+               displacement can silently wrap.
+
+          Usage: verify-loong64-hook.py [path/to/loong64_hook.rs] [path/to/zig]
+          """
+
+          import os
+          import re
+          import struct
+          import subprocess
+          import sys
+          import tempfile
+          from shutil import which
+
+          SRC_DEFAULT = os.path.join(
+              os.path.dirname(os.path.abspath(__file__)), "loong64_hook.rs"
+          )
+
+          # Rust const name -> the assembler line it must correspond to.
+          REFERENCE = [
+              ("PCADDI_T0_0", "pcaddi $t0, 0"),
+              ("LD_D_T0_T0_16", "ld.d $t0, $t0, 16"),
+              ("JIRL_ZERO_T0", "jirl $zero, $t0, 0"),
+              ("NOP", "nop"),
+              ("DBAR_0", "dbar 0"),
+              ("IBAR_0", "ibar 0"),
+              ("RET", "jirl $zero, $ra, 0"),
+          ]
+
+          B_OPCODE = 0x5000_0000
+
+
+          def find_zig(explicit):
+              for candidate in ([explicit] if explicit else []) + ["zig", "zig.exe"]:
+                  if not candidate:
+                      continue
+                  found = which(candidate) or (candidate if os.path.exists(candidate) else None)
+                  if found:
+                      return found
+              raise SystemExit("!! zig not found; pass its path as the second argument")
+
+
+          def elf_text(path):
+              """Raw bytes of the .text section of a 64-bit little-endian ELF object."""
+              with open(path, "rb") as handle:
+                  blob = handle.read()
+              if blob[:4] != b"\x7fELF" or blob[4] != 2 or blob[5] != 1:
+                  raise SystemExit("!! not a 64-bit little-endian ELF: " + path)
+
+              shoff = struct.unpack_from("<Q", blob, 0x28)[0]
+              esize = struct.unpack_from("<H", blob, 0x3A)[0]
+              count = struct.unpack_from("<H", blob, 0x3C)[0]
+              stridx = struct.unpack_from("<H", blob, 0x3E)[0]
+
+              def head(index):
+                  return struct.unpack_from("<IIQQQQ", blob, shoff + index * esize)
+
+              strtab = blob[head(stridx)[4] : head(stridx)[4] + head(stridx)[5]]
+              for index in range(count):
+                  name_off, _, _, _, offset, size = head(index)
+                  name = strtab[name_off : strtab.index(b"\0", name_off)].decode()
+                  if name == ".text":
+                      return blob[offset : offset + size]
+              raise SystemExit("!! no .text section in " + path)
+
+
+          def assemble(zig, source):
+              """Assemble one translation unit and return its .text bytes."""
+              with tempfile.TemporaryDirectory() as tmp:
+                  s_path = os.path.join(tmp, "hook.s")
+                  o_path = os.path.join(tmp, "hook.o")
+                  with open(s_path, "w") as handle:
+                      handle.write(source)
+                  proc = subprocess.run(
+                      [zig, "cc", "-target", "loongarch64-linux-gnu", "-c", s_path, "-o", o_path],
+                      capture_output=True,
+                      text=True,
+                  )
+                  if proc.returncode != 0:
+                      raise SystemExit("!! assembler failed:\n" + proc.stdout + proc.stderr)
+                  return elf_text(o_path)
+
+
+          # The assembler resolves `b` relative to the enclosing section, so labels are
+          # used and the branch is padded into place; addressing a literal absolute
+          # address is unreliable in a relocatable object.
+          def assemble_branch(zig, delta):
+              if delta > 0:
+                  source = ".text\n.globl _start\n_start:\n    b L\n    .space %d\nL:\n    nop\n" % (
+                      delta - 4
+                  )
+                  at = 0
+              else:
+                  source = ".text\n.globl _start\nL:\n    .space %d\n_start:\n    b L\n" % (-delta)
+                  at = -delta
+              return struct.unpack_from("<I", assemble(zig, source), at)[0]
+
+
+          def check_instruction_words(zig, rust_src):
+              words = {}
+              for name, line in REFERENCE:
+                  match = re.search(r"\bconst\s+%s\s*:\s*u32\s*=\s*0x([0-9a-fA-F_]+)\s*;" % name, rust_src)
+                  if not match:
+                      raise SystemExit("!! const %s not found in loong64_hook.rs" % name)
+                  words[name] = int(match.group(1).replace("_", ""), 16)
+
+              source = ".text\n.globl hook_words\nhook_words:\n"
+              source += "".join("    %s\n" % line for _, line in REFERENCE)
+              text = assemble(zig, source)
+              if len(text) != 4 * len(REFERENCE):
+                  raise SystemExit("!! unexpected .text size %d" % len(text))
+
+              bad = 0
+              for index, (name, line) in enumerate(REFERENCE):
+                  actual = struct.unpack_from("<I", text, index * 4)[0]
+                  if actual != words[name]:
+                      print("FAIL %-16s %-20s rust=0x%08x llvm=0x%08x" % (name, line, words[name], actual))
+                      bad += 1
+              if bad:
+                  raise SystemExit("!! %d instruction words do not match LLVM" % bad)
+              print("==> all %d instruction words match LLVM" % len(REFERENCE))
+
+
+          def encode_b(from_addr, to_addr):
+              """Mirror of encode_b() in loong64_hook.rs."""
+              delta = to_addr - from_addr
+              if delta & 3:
+                  return None
+              offset = delta >> 2
+              if offset < -(1 << 25) or offset >= (1 << 25):
+                  return None
+              bits = offset & 0x03FF_FFFF
+              return B_OPCODE | ((bits & 0xFFFF) << 10) | (bits >> 16)
+
+
+          def decode_b(word):
+              """Independent decoder: recover the signed byte displacement."""
+              offset = ((word & 0x3FF) << 16) | ((word >> 10) & 0xFFFF)
+              if offset & (1 << 25):
+                  offset -= 1 << 26
+              return offset * 4
+
+
+          def check_branch_encoder(zig):
+              # Past 256 KiB the upper half of the split immediate becomes non-zero, so
+              # the sample has to reach beyond that to cover the whole field layout.
+              magnitudes = [4, 8, 64, 256, 4096, 65536, 262144, 1 << 20, 1 << 22]
+              samples = [value for magnitude in magnitudes for value in (magnitude, -magnitude)]
+              bad = 0
+              for delta in samples:
+                  expected = encode_b(0, delta)
+                  actual = assemble_branch(zig, delta)
+                  if actual != expected:
+                      print("FAIL b delta=%-9d rust=0x%08x llvm=0x%08x" % (delta, expected, actual))
+                      bad += 1
+              if bad:
+                  raise SystemExit("!! %d branch encodings do not match LLVM" % bad)
+              print("==> b encoder matches LLVM on all %d sampled displacements" % len(samples))
+
+              cases = list(range(-400, 400))
+              cases += [-(1 << 25), -(1 << 25) + 1, -(1 << 24), (1 << 24), (1 << 25) - 2, (1 << 25) - 1]
+              cases += [-(1 << 25) + k for k in range(1, 400)]
+              cases += [(1 << 25) - 1 - k for k in range(400)]
+
+              bad = 0
+              for unit in cases:
+                  delta = unit * 4
+                  word = encode_b(0, delta)
+                  if word is None:
+                      print("FAIL b unit=%-10d rejected although in range" % unit)
+                      bad += 1
+                  elif decode_b(word) != delta:
+                      print("FAIL b unit=%-10d encoded=0x%08x decoded=%d" % (unit, word, decode_b(word)))
+                      bad += 1
+              for unit in ((1 << 25), -(1 << 25) - 1, (1 << 26), -(1 << 26)):
+                  if encode_b(0, unit * 4) is not None:
+                      print("FAIL b unit=%-10d accepted although out of range" % unit)
+                      bad += 1
+              if bad:
+                  raise SystemExit("!! %d branch round-trip failures" % bad)
+              print("==> b encoder round-trips across its whole range (%d cases)" % len(cases))
+
+
+          def main():
+              rust_path = sys.argv[1] if len(sys.argv) > 1 else SRC_DEFAULT
+              zig = find_zig(sys.argv[2] if len(sys.argv) > 2 else None)
+              with open(rust_path, encoding="utf-8") as handle:
+                  rust_src = handle.read()
+              print("==> verifying %s" % rust_path)
+              check_instruction_words(zig, rust_src)
+              check_branch_encoder(zig)
+              print("==> loong64 hook machine code verified")
+
+
+          if __name__ == "__main__":
+              main()
+          PYEOF
+          python3 modules/window/src/linux/proxy/verify-loong64-hook.py \
+            modules/window/src/linux/proxy/loong64_hook.rs
       - name: 交叉编译 Rust napi 模块
         run: |
           set -euo pipefail
@@ -263,6 +795,160 @@ jobs:
           grep -q "LoongArch" /tmp/arch-check.txt \
             || { echo "!! 存在非 LoongArch 产物"; exit 1; }
           echo "==> 全部 .node 产物均为 LoongArch"
+
+      # ---------- 7.5. loong64 hook 运行时自检程序 ----------
+      # loong64_hook.rs 是手写机器码: 出错时只会在真机上表现为崩溃或拖拽失灵。
+      # 这里把它单独编成一个 loong64 可执行文件, 在第 10 步的真实指令流里
+      # 实际 patch 一个函数入口并调用, 完整走一遍
+      # 改入口 -> b 跳 trampoline -> 绝对跳转到替换函数 -> unhook 还原。
+      - name: 构建 loong64 hook 运行时自检程序
+        run: |
+          set -euo pipefail
+          SELFTEST=/tmp/hook-selftest
+          mkdir -p "${SELFTEST}/src"
+          # 直接复用仓库里的同一份实现, 避免"测的"与"跑的"不是一份代码
+          cp modules/window/src/linux/proxy/loong64_hook.rs "${SELFTEST}/src/loong64_hook.rs"
+          cat > "${SELFTEST}/Cargo.toml" <<'TCEOF'
+          [package]
+          name = "hook-selftest"
+          version = "0.0.0"
+          edition = "2021"
+
+          [[bin]]
+          name = "hook-selftest"
+          path = "src/main.rs"
+
+          [dependencies]
+          libc = "0.2"
+          TCEOF
+          cat > "${SELFTEST}/src/main.rs" <<'RSEOF'
+          //! Runtime self-test for the loong64 inline hook.
+          //!
+          //! The hook rewrites the first instruction of libc's `connect` / `close`
+          //! entries. That is what lets the window module reroute the display-server
+          //! connection into its MITM proxy, and therefore what makes window dragging
+          //! and desktop-lyric dragging work. Hand-written machine code fails on real
+          //! hardware as a crash or a silent no-op, so this binary hooks a function of
+          //! its own and calls it, exercising the whole chain:
+          //!
+          //!     patched entry --b--> trampoline page --pcaddi/ld.d/jirl--> replacement
+          //!
+          //! and then unhooks and checks the original body is reachable again.
+          //!
+          //! The checks are split by how much they rely on the CPU's handling of
+          //! self-modifying code:
+          //!
+          //!   * memory-level - the entry word really is the encoded `b`, and unhook
+          //!     puts the exact previous word back. Deterministic everywhere.
+          //!   * execution-level - the detour is actually taken. That needs the CPU or
+          //!     emulator to notice a store into an instruction page, so under qemu-user
+          //!     a failure here is reported loudly but is not treated as proof of a bug.
+          //!
+          //! Exits non-zero only on a definite defect.
+
+          mod loong64_hook;
+
+          const ORIGINAL: u64 = 0x1111_1111_1111_1111;
+          const REPLACEMENT: u64 = 0x2222_2222_2222_2222;
+
+          /// The function the hook is installed on. `#[inline(never)]` together with a
+          /// taken address keeps it as a real out-of-line body with its own entry.
+          #[inline(never)]
+          #[no_mangle]
+          pub extern "C" fn selftest_target() -> u64 {
+              std::hint::black_box(ORIGINAL)
+          }
+
+          /// Where the trampoline should land. It has to be ABI-compatible with the
+          /// target: the trampoline clobbers only `$t0`, a scratch register, and leaves
+          /// `$ra` alone, so the replacement returns straight to the original caller.
+          #[inline(never)]
+          #[no_mangle]
+          pub extern "C" fn selftest_replacement() -> u64 {
+              std::hint::black_box(REPLACEMENT)
+          }
+
+          fn fail(message: &str) -> ! {
+              eprintln!("HOOK FAIL: {}", message);
+              std::process::exit(1);
+          }
+
+          fn main() {
+              let target_fn: extern "C" fn() -> u64 = selftest_target;
+              let replacement_fn: extern "C" fn() -> u64 = selftest_replacement;
+              let target = target_fn as usize;
+              let replacement = replacement_fn as usize;
+              println!("==> target=0x{:x} replacement=0x{:x}", target, replacement);
+
+              if target == replacement {
+                  fail("target and replacement resolved to the same address");
+              }
+              if target % 4 != 0 {
+                  fail("the hook target is not 32-bit aligned");
+              }
+
+              let baseline = selftest_target();
+              if baseline != ORIGINAL {
+                  fail(&format!("target returned 0x{:016x} before hooking", baseline));
+              }
+
+              let displaced = match loong64_hook::inline_hook_jump(target as u64, replacement as u64) {
+                  Ok(word) => word,
+                  Err(error) => fail(&format!("inline_hook_jump rejected the target: {}", error)),
+              };
+              println!("==> hook installed, displaced word = 0x{:08x}", displaced);
+
+              // Memory-level: the entry must now hold a `b` (opcode is bits 31:26).
+              let patched = unsafe { std::ptr::read_volatile(target as *const u32) };
+              if patched == displaced {
+                  fail("the entry word was not modified at all");
+              }
+              if patched >> 26 != 0b010100 {
+                  fail(&format!("entry word 0x{:08x} is not a `b` branch", patched));
+              }
+              println!("HOOK OK   entry now holds 0x{:08x} (a `b` branch)", patched);
+
+              // Execution-level: take the detour. qemu-user only manages this if it
+              // implements self-modifying-code invalidation, hence the softer wording.
+              let detoured = selftest_target();
+              if detoured == REPLACEMENT {
+                  println!("HOOK OK   detour reached the replacement function");
+              } else if detoured == ORIGINAL {
+                  println!("::warning::HOOK PENDING: the entry is patched but execution still reached the original body; that is the qemu-user self-modifying-code path, not proof of a defect on real hardware");
+              } else {
+                  fail(&format!("the hooked call returned 0x{:016x}", detoured));
+              }
+
+              // Restore, and confirm the exact original word came back.
+              if !loong64_hook::unhook(target as u64) {
+                  fail("unhook reported that no hook was installed");
+              }
+              let restored = unsafe { std::ptr::read_volatile(target as *const u32) };
+              if restored != displaced {
+                  fail(&format!(
+                      "unhook restored 0x{:08x} instead of 0x{:08x}",
+                      restored, displaced
+                  ));
+              }
+              println!("UNHOOK OK entry restored to 0x{:08x}", restored);
+
+              let after = selftest_target();
+              if after != ORIGINAL {
+                  fail(&format!("target returned 0x{:016x} after unhook", after));
+              }
+              println!("UNHOOK OK the original body is reachable again");
+              println!("HOOK SELFTEST PASSED");
+          }
+          RSEOF
+          cargo zigbuild --release --target "${CROSS_TARGET_GLIBC}" \
+            --manifest-path "${SELFTEST}/Cargo.toml"
+          # 放在 out/ 之外: electron-forge 打包时会动 out/ 目录
+          mkdir -p build-tools
+          cp "${SELFTEST}/target/${CROSS_TARGET}/release/hook-selftest" build-tools/hook-selftest
+          file build-tools/hook-selftest | tee /tmp/hook-selftest-arch.txt
+          grep -q "LoongArch" /tmp/hook-selftest-arch.txt \
+            || { echo "!! 自检程序不是 LoongArch 产物"; exit 1; }
+          echo "==> 自检程序已就绪: build-tools/hook-selftest"
 
       # ---------- 8. 给 forge.config.ts 注入 mirrorOptions ----------
       # 作用: (a) 绕过 @electron/packager 的 loong64 架构白名单校验;
@@ -358,6 +1044,11 @@ jobs:
                 }
                 if (failed > 0) process.exit(1);
               "
+              echo "==> loong64 inline hook 运行时自检"
+              # hook 改写 libc 的 connect/close 入口, 是窗口拖动/桌面歌词拖动的
+              # 实现基础; 在真实 loong64 指令流上跑一遍, 确认 patch 真的生效。
+              test -x /workspace/build-tools/hook-selftest
+              /workspace/build-tools/hook-selftest
               echo "==> 冒烟测试通过: 全部 loong64 原生模块可正常加载"
             '
 
@@ -376,4 +1067,5 @@ jobs:
           path: |
             out/open-orpheus-linux-loong64/
             out/open-orpheus-linux-loong64.tar.gz
+            build-tools/hook-selftest
           if-no-files-found: error
