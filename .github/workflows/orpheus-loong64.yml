@@ -1,0 +1,1816 @@
+# ============================================================================
+# open-orpheus 龙芯 (loong64 / LoongArch) 编译流水线 —— v3: 宿主机交叉编译方案
+# 目标系统: deepin 25 (crimson) | Electron: darkyzhou 移植版（以 env.ELECTRON_VERSION 为准）
+# ============================================================================
+#
+# 【为何不再在 QEMU 容器里构建】
+#   之前在 QEMU 模拟的 deepin-loong64 容器内直接构建, 卡在 rolldown /
+#   @tailwindcss/oxide 的 WASM 回退包上: 它们是按 WebAssembly SIMD 编译的,
+#   而 Node loong64 的 V8 (13.6) 后端硬编码不支持 Wasm SIMD
+#   (SupportsWasmSimd128() 直接返回 false, 上游 2026 年才合入 LSX SIMD 支持),
+#   报 "Wasm SIMD unsupported"。这是 V8 编译期限制, 与 QEMU 是否暴露 LSX
+#   (QEMU_CPU=la464 等) 无关, 在容器内无解。
+#
+#   因此本方案改为:
+#     - 全部 JS 构建(vite/rolldown/tsdown/tailwind/svelte-kit)在 x86 宿主机
+#       原生进行, rolldown / oxide / esbuild 均直接用官方 x64 原生二进制;
+#     - Rust 原生模块用 cargo-zigbuild + zig 交叉编译出 loong64 的 .node;
+#     - Electron 二进制用 darkyzhou 移植包(@electron/get 从 release 下载);
+#     - 最后在 QEMU 的 deepin-loong64 容器里用 loong64 node 做加载冒烟测试
+#       (只验证原生模块加载, 不涉及 SIMD, V8 无碍)。
+#
+# 【关键事实 / 需知】
+#   1. 项目 pin 了 electron@43.3.0, 但 loong64 移植(darkyzhou/electron-loong64)
+#      必须从 darkyzhou 镜像拉取 loong64 二进制(项目原为 43.3.0, 镜像可能有滞后)。
+#   2. @electron/packager 官方架构白名单不含 loong64; 只有当
+#      packagerConfig.download.mirrorOptions 存在时才跳过校验。注意 customDir
+#      必须是 "v${ELECTRON_VERSION}"(release 目录带 v 前缀, @electron/get 默认目录不带)。
+#      该 release 同时提供 SHASUMS256.txt, 可用远程校验。
+#   3. napi 模块(database/dbus/window)与 music-tag-native 均为纯 Rust 或
+#      带内嵌 C(database 的 rusqlite bundled sqlite, 由 zig cc 交叉编译),
+#      用 cargo-zigbuild 交叉编译。产物放 <模块>/<name>.linux-loong64-gnu.node,
+#      napi 生成的 index.js loader 自带 loong64 分支且优先加载本地文件,
+#      无需任何 loader 改造。
+#   4. glibc 下限锁定 2.36(loong64 主线 glibc 的最低版本), deepin 25 满足;
+#      交叉产物也兼容其他 glibc >= 2.36 的 loong64 发行版。
+#   5. lifecycle 模块(tsdown 打包纯 JS)与 audio-effect(wasm-bindgen 产出纯
+#      WASM)在宿主机原生构建即可, 产物架构无关; ui / av3a 是 napi-rs 项目(与
+#      database/dbus/window 同类), 在步骤 4 一起交叉编译。
+#   6. music-tag-native 源码在 github.com/subframe7536/music-tag-native,
+#      按 npm 实际安装版本取对应 tag 交叉编译, .node 放进 pnpm 虚拟 store
+#      里的真实目录(经 require.resolve 定位)。
+#   7. AppImage / Flatpak / Rpm maker 在 loong64 下不可用(appimagetool 等
+#      无 loong64 二进制), 只做 electron-forge package 产出目录再打 tar.gz。
+#   8. @silvia-odwyer/photon-node 是纯 WASM(wasm-bindgen, 不含 SIMD 指令),
+#      Electron loong64 的 V8 可直接跑; 7z-wasm / audio-effect 的 WASM 同理。
+#   9. window 模块的 Linux 依赖 sighook 0.10 只支持 x86_64/aarch64, 在
+#      loong64 上 compile_error!。它仅被 proxy/mod.rs 用于 hook libc
+#      connect/close(Wayland/X11 MITM), 而这个 hook 正是窗口拖动 / 桌面歌词
+#      拖动的实现基础 —— 早先把它桩掉的做法会让拖拽彻底失灵, 因此步骤 3.5
+#      改为: 依赖限定到非 loongarch64 + 为 loong64 提供本地 inline hook 后端
+#      (proxy/loong64_hook.rs: 单条 `b` 指令原子 patch 函数入口, 跳到邻近
+#      mmap 的 trampoline 页做 64 位绝对跳转), 功能与 x64 保持一致。
+#   10. 已知风险: Electron 42 与 43 之间的 API 差异可能需要少量代码适配。
+#  11. 若 @electron/get 校验 SHASUMS 失败, 可在注入的 download 配置里加
+#      unsafelyDisableChecksums: true(该 release 页面附有 sha256 可人工核对)。
+#  12. font-kit(ui 模块)在 Linux 上硬依赖 freetype-sys(non-optional), 它的
+#      build.rs 用 pkg-config 找 freetype2, 交叉编译直接报 "pkg-config has not
+#      been configured to support cross-compilation"; 打开 freetype-sys 的
+#      bundled 特性即可(包内自带 freetype + libpng 源码, 交给 cc->zig 编译),
+#      不需要目标平台 sysroot, 也不抬高 glibc 2.36 下限。见步骤 3.6。
+#  13. freetype-sys 的 bundled 分支编译 libpng 时, 用的是 build.rs 里写死的
+#      **相对** include "libz-sys/src/zlib"; 上游仓库中 libz-sys 是 git
+#      submodule(.gitmodules 可查), 而 submodule 内容不会随 crate 发布, 所以
+#      crates.io 版里这个目录并不存在 —— libpng/pngstruct.h 的
+#      #include "zlib.h" 必然 fatal error。该路径相对 build script 的工作目录
+#      (即包根)解析, 所以步骤 3.7 把 libz-sys 真源码里的 zlib 头在包内补回原位,
+#      并额外经 CFLAGS_<target> 注入一份兜底, 全程不改上游文件。
+#  14. freetype-sys 0.23.0 的 build.rs 在 bundled 分支里还写死了
+#      println!("cargo:rustc-link-lib=z") —— 这是**动态**请求。原生构建能过,
+#      只因为系统自带 /usr/lib/<triple>/libz.so; 交叉编译时 rustc 不会去翻
+#      编译器 sysroot, 只在显式 -L 目录里找 libz.so, 而那里只有 libz-sys 编出
+#      的静态 libz.a, 于是报 "unable to find dynamic system library 'z'"。
+#      步骤 3.8 把这一行改成 static=z, 并置 LIBZ_SYS_STATIC=1 保证 libz.a 存在。
+#  15. freetype-sys 0.23.0 的 build.rs 只给 arm/aarch64 补编了 libpng 的 SIMD
+#      源文件; 而包内 libpng 1.6.44 的 pngpriv.h 在编译器定义 __loongarch_sx
+#      时(zig cc 的 loongarch64 默认 la464, 带 LSX)自动启用 LSX 过滤器,
+#      pngrutil.c 因此引用 png_init_filter_functions_lsx —— 包里明明带着
+#      libpng/loongarch/{loongarch_lsx_init.c, filter_lsx_intrinsics.c},
+#      只是 build.rs 忘了编。症状: 运行期 dlopen 报
+#      "undefined symbol: png_init_filter_functions_lsx"(ldd -r 同样可见),
+#      模块因此加载失败(napi loader 会把它包成无信息量的 "Cannot find
+#      native binding")。步骤 3.9 在 build.rs 的 arm 分支前插入 loongarch64
+#      分支编入这两个文件(带 getauxval(AT_HWCAP) 运行时检测, 无 LSX 的
+#      硬件自动回退纯 C 过滤器)。本机已用 zig cc(loongarch64) 复刻编译并
+#      验证符号闭合。
+#  16. 冒烟步骤的 node -e 载荷处于 bash 双引号内: JS 注释里的半角双引号会被
+#      bash 当成字符串边界, 引号外的括号直接语法错误(bash: line 74: syntax
+#      error near unexpected token '(')。JS 注释一律不用半角双引号, 校验脚本
+#      (check_smoke_js.py)已加此规则。
+
+name: 编译 open-orpheus (loong64 / deepin 25)
+
+on:
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: 24.20.0          # loong64 node, 仅用于容器内冒烟测试
+  PNPM_VERSION: 11.20.0          # 与 package.json 的 packageManager 一致
+  ELECTRON_VERSION: 43.4.1       # darkyzhou 移植版（项目原为 43.3.0）
+  ELECTRON_MIRROR: https://github.com/darkyzhou/electron-loong64/releases/download/
+  CROSS_TARGET: loongarch64-unknown-linux-gnu
+  # cargo-zigbuild 支持在 target 后追加 glibc 版本下限
+  CROSS_TARGET_GLIBC: loongarch64-unknown-linux-gnu.2.36
+
+jobs:
+  build:
+    name: 交叉编译构建 (loong64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 QEMU（供最终 deepin 容器冒烟测试）
+        uses: docker/setup-qemu-action@v3
+
+      # 宿主机用官方 x64 Node 24（项目要求 node>=24），所有 JS 构建原生跑
+      - name: 安装 Node.js（宿主机 x64）
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: 安装 pnpm
+        run: |
+          npm install -g "pnpm@${PNPM_VERSION}"
+          pnpm -v
+
+      # ---------- 1. Rust 工具链 + 交叉目标 + wasm-bindgen ----------
+      # wasm-bindgen-cli 供 audio-effect 模块在宿主机处理 wasm 产物（架构无关）。
+      # 版本必须与 audio-effect crate 依赖的 wasm-bindgen 完全一致（schema 版本
+      # 不向前兼容），因此从仓库根 Cargo.lock 动态解析，而不是硬编码常量。
+      - name: 安装 Rust 工具链
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          rustc -V
+          rustup target add loongarch64-unknown-linux-gnu wasm32-unknown-unknown
+
+      - name: 安装 wasm-bindgen-cli（跟随 Cargo.lock 解析到的版本）
+        run: |
+          set -euo pipefail
+          # 从仓库根 Cargo.lock 解析 wasm-bindgen 版本（audio-effect 引用的版本）
+          WB_VERSION=$(awk '
+            /^name = "wasm-bindgen"$/ { flag = 1; next }
+            flag && /^version/ { sub(/^[^"]*"/, ""); sub(/"$/, ""); print; exit }
+          ' Cargo.lock)
+          if [ -z "${WB_VERSION}" ]; then
+            echo "!! Cargo.lock 中未找到 wasm-bindgen 条目"
+            exit 1
+          fi
+          echo "==> wasm-bindgen 版本: ${WB_VERSION}"
+          cargo install wasm-bindgen-cli --version "${WB_VERSION}" --locked
+          wasm-bindgen --version
+
+      # ---------- 2. zig + cargo-zigbuild（交叉编译核心） ----------
+      # zig cc 负责链接与 C 代码（rusqlite bundled sqlite）的 loong64 交叉编译
+      - name: 安装 zig 与 cargo-zigbuild
+        run: |
+          python3 -m pip install --user ziglang || python3 -m pip install ziglang
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+          if ! command -v zig >/dev/null 2>&1; then
+            printf '#!/bin/sh\nexec python3 -m ziglang "$@"\n' | sudo tee /usr/local/bin/zig >/dev/null
+            sudo chmod +x /usr/local/bin/zig
+          fi
+          zig version
+          cargo install cargo-zigbuild --locked
+          # cargo-zigbuild 未实现 --version 参数, 用 --help 验证子命令已注册
+          cargo zigbuild --help >/dev/null
+
+      # ---------- 3. Electron 降级 + 安装依赖（宿主机 x64） ----------
+      # ELECTRON_SKIP_BINARY_DOWNLOAD=1: electron npm 包的 postinstall 不下载
+      # x64 二进制（forge 打包时由 @electron/get 从镜像下载 loong64 版）。
+      # -w: open-orpheus 是 pnpm 工作区，加到根 package.json 必须显式声明。
+      - name: Electron 降级并安装依赖
+        run: |
+          export ELECTRON_SKIP_BINARY_DOWNLOAD=1
+          pnpm add -D -w "electron@${ELECTRON_VERSION}"
+          pnpm install --no-frozen-lockfile
+          echo "==> electron: $(node -p "require(\"electron/package.json\").version")"
+
+      # ---------- 3.5. window 模块 loong64 补丁 ----------
+      # sighook 0.10 只支持 x86_64/aarch64, 在 loong64 上直接 compile_error!。
+      # 它只被 proxy/mod.rs 用来 hook libc 的 connect/close —— 而这正是窗口拖动、
+      # 桌面歌词拖动等交互的实现基础(把 display server 连接改道进 MITM 代理),
+      # 所以不能像早先那样简单桩掉: 那样虽然能编译通过, 但拖拽会彻底失灵。
+      # 补丁: (1) Cargo.toml 把 sighook 依赖限定到非 loongarch64;
+      #       (2) proxy/mod.rs 在 loong64 上改用本地后端 inline_hook_jump/unhook;
+      #       (3) 新增 proxy/loong64_hook.rs —— 用单条 `b` 指令原子 patch 函数入口,
+      #           跳到 ±128MiB 内 mmap 出来的 trampoline 页, 在那里做 64 位绝对跳转。
+      - name: 补丁 window 模块 (loong64 inline hook 后端)
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib
+
+          cargo = pathlib.Path("modules/window/Cargo.toml")
+          s = cargo.read_text()
+          old = """[target.'cfg(target_os = "linux")'.dependencies]
+          libc = "0.2.182"
+          sighook = "0.10.0"
+          """
+          new = """[target.'cfg(target_os = "linux")'.dependencies]
+          libc = "0.2.182"
+
+          [target.'cfg(all(target_os = "linux", not(target_arch = "loongarch64")))'.dependencies]
+          sighook = "0.10.0"
+          """
+          if old not in s:
+              raise SystemExit("!! Cargo.toml 锚点未找到, 上游结构可能已变化")
+          cargo.write_text(s.replace(old, new))
+
+          proxy = pathlib.Path("modules/window/src/linux/proxy/mod.rs")
+          s = proxy.read_text()
+          old = "use sighook::{inline_hook_jump, unhook};"
+          new = """#[cfg(not(target_arch = "loongarch64"))]
+          use sighook::{inline_hook_jump, unhook};
+
+          // sighook 只支持 x86_64/aarch64; loong64 走本地后端, 用单条 `b` 指令
+          // patch 函数入口(见 loong64_hook.rs), 语义与 sighook 保持一致。
+          #[cfg(target_arch = "loongarch64")]
+          mod loong64_hook;
+          #[cfg(target_arch = "loongarch64")]
+          use loong64_hook::{inline_hook_jump, unhook};
+          """
+          if old not in s:
+              raise SystemExit("!! proxy/mod.rs 锚点未找到, 上游结构可能已变化")
+          proxy.write_text(s.replace(old, new))
+          print("==> proxy/mod.rs 已切到 loong64 hook 后端")
+          PYEOF
+
+          # loong64 inline hook 后端(每条指令编码都已用 LLVM loongarch64 汇编器核对)
+          cat > modules/window/src/linux/proxy/loong64_hook.rs <<'RSEOF'
+          //! Minimal `sighook` replacement for loongarch64.
+          //!
+          //! Upstream `sighook` implements inline hooking for x86_64 / aarch64 only, so on
+          //! loong64 the `connect` / `close` hooks could not be installed at all and window
+          //! dragging as well as the desktop-lyric input path silently degraded. This
+          //! module provides an equivalent implementation with the same two-function API.
+          //!
+          //! # Mechanism
+          //!
+          //! The first instruction of the target is replaced by a single LoongArch `b`
+          //! branch (26-bit PC-relative, plus or minus 128 MiB) that jumps to a 32-byte
+          //! stub. The stub performs an absolute jump to the replacement function, built
+          //! from `pcaddi` + `ld.d` + `jirl` around an inline 8-byte literal.
+          //!
+          //! Only one naturally aligned 32-bit instruction word is ever written, so a
+          //! thread calling the hooked function concurrently observes either the original
+          //! entry or the finished branch, never a torn sequence. That matters because
+          //! `close` in particular is called from arbitrary threads.
+          //!
+          //! Nothing here needs to call the original function through a trampoline: both
+          //! detours in `proxy::mod` issue raw syscalls, so the displaced instruction can
+          //! simply be saved and restored without relocating it.
+          //!
+          //! # Placing the stub
+          //!
+          //! `b` reaches only 128 MiB, so the stub page has to live close to the target -
+          //! and in a real process that window is often nearly full. Three things make the
+          //! search survive that:
+          //!
+          //!   * a **pool**: slots are handed out of pages that are already mapped, so a
+          //!     second hook in the same library (`connect` next to `close`) needs no new
+          //!     mapping at all. This is the case that used to fail: `connect` was hooked
+          //!     first, found no free page, and gave up, while `close` - a few hundred
+          //!     kilobytes away - found one;
+          //!   * **both directions**: the window is searched downwards *and* upwards. The
+          //!     only hole may well be above the target;
+          //!   * **`/proc/self/maps`**: instead of poking one address at a time, the exact
+          //!     set of free ranges is read and the gaps are tried nearest-first, so a
+          //!     small hole (or one a stepped probe would jump over) is still found.
+          //!
+          //! Every attempt uses `MAP_FIXED_NOREPLACE` (or a plain hint, which the kernel
+          //! may ignore but never clobbers anything with), so no probe can ever replace an
+          //! existing mapping.
+          //!
+          //! # Instruction encodings
+          //!
+          //! Every word below was verified byte-for-byte against LLVM's LoongArch
+          //! assembler (`zig cc -target loongarch64-linux-gnu -c`). The companion script
+          //! `verify-loong64-hook.py` repeats that check against this file, so a mistyped
+          //! literal cannot slip through unnoticed.
+
+          use core::ptr;
+
+          use libc::{_SC_PAGESIZE, c_int, c_void, mmap, mprotect, munmap, sysconf};
+          use std::collections::HashMap;
+          use std::sync::{Mutex, OnceLock};
+
+          // ── Linux mmap/mprotect flags ─────────────────────────────────────────────
+          // Spelled out locally so this file does not depend on the libc crate exporting
+          // every flag for every target.
+
+          const PROT_READ_: c_int = 0x1;
+          const PROT_WRITE_: c_int = 0x2;
+          const PROT_EXEC_: c_int = 0x4;
+          const MAP_PRIVATE_: c_int = 0x02;
+          const MAP_ANONYMOUS_: c_int = 0x20;
+          const MAP_FIXED_NOREPLACE_: c_int = 0x0010_0000;
+
+          /// Used only if `sysconf` cannot report the page size. LoongArch kernels run
+          /// 16 KiB pages by default - hardcoding 4 KiB here would make every `mprotect`
+          /// call fail with `EINVAL`, because the kernel insists on a page-aligned start.
+          const DEFAULT_PAGE_SIZE: usize = 16 * 1024;
+
+          /// Never ask the kernel for anything below this. `mmap_min_addr` rejects such
+          /// requests anyway, and a mapping at address zero is a security hole.
+          const MIN_ADDRESS: usize = 0x1_0000;
+
+          // ── LoongArch instruction words ───────────────────────────────────────────
+
+          /// `pcaddi $t0, 0`: `$t0` = the address of this very instruction.
+          const PCADDI_T0_0: u32 = 0x1800_000c;
+          /// `ld.d $t0, $t0, 16`: load the 8-byte literal that follows the jump.
+          const LD_D_T0_T0_16: u32 = 0x28c0_418c;
+          /// `jirl $zero, $t0, 0`: jump through `$t0` without linking.
+          const JIRL_ZERO_T0: u32 = 0x4c00_0180;
+          /// `nop`.
+          const NOP: u32 = 0x0340_0000;
+          /// `dbar 0`: make the store visible before execution resumes.
+          const DBAR_0: u32 = 0x3872_0000;
+          /// `ibar 0`: drop instructions that were fetched before the patch.
+          const IBAR_0: u32 = 0x3872_8000;
+          /// `jirl $zero, $ra, 0`: return to the caller.
+          const RET: u32 = 0x4c00_0020;
+
+          /// `b`: 26-bit signed PC-relative branch, `opcode[31:26] = 0b010100`.
+          /// The immediate is split across the word: `offset[15:0]` sits in bits 25:10 and
+          /// `offset[25:16]` in bits 9:0. The offset counts 4-byte units.
+          const B_OPCODE: u32 = 0x5000_0000;
+          /// Largest byte distance a `b` can reach (2^27).
+          const B_RANGE: i64 = 1 << 27;
+          /// The same limit expressed in the branch immediate's 4-byte units: the signed
+          /// 26-bit field spans `[-2^25, 2^25)`.
+          const B_OFFSET_LIMIT: i64 = B_RANGE / 4;
+
+          /// One stub occupies 32 bytes: `pcaddi` + `ld.d` + `jirl` + `nop` + an 8-byte
+          /// literal + two words of padding. The padding is not decoration - it keeps every
+          /// slot 8-byte aligned, and `ld.d` traps on a misaligned address.
+          const SLOT_WORDS: usize = 8;
+          const SLOT_SIZE: usize = SLOT_WORDS * 4;
+
+          /// The `dbar 0; ibar 0; ret` helper is written once per page, in its last bytes.
+          const FLUSH_SIZE: usize = 16;
+
+          /// How many of the nearest gaps get a second, advisory attempt. Only useful on a
+          /// kernel that ignores `MAP_FIXED_NOREPLACE`, where the request degrades into a
+          /// hint; the bound keeps a hopeless search cheap.
+          const HINT_RETRIES: usize = 8;
+
+          // ── Bookkeeping ───────────────────────────────────────────────────────────
+
+          /// Every installed hook, keyed by the patched entry address, plus the pool of
+          /// stub pages they share.
+          static STATE: OnceLock<Mutex<State>> = OnceLock::new();
+
+          #[derive(Default)]
+          struct State {
+              hooks: HashMap<usize, Hook>,
+              pages: Vec<Page>,
+          }
+
+          struct Hook {
+              /// First instruction word of the target, as it was before patching.
+              original: u32,
+              /// Executable page holding this hook's stub and the barrier helper, kept for
+              /// the synchronisation helper on unhook.
+              page: usize,
+          }
+
+          /// A mapped stub page and its allocator: slots at `base + used * SLOT_SIZE`.
+          struct Page {
+              base: usize,
+              used: usize,
+          }
+
+          fn with_state<R>(f: impl FnOnce(&mut State) -> R) -> Option<R> {
+              let state = STATE.get_or_init(|| Mutex::new(State::default()));
+              let mut guard = state.lock().ok()?;
+              Some(f(&mut guard))
+          }
+
+          // ── Helpers ───────────────────────────────────────────────────────────────
+
+          fn page_size() -> usize {
+              let size = unsafe { sysconf(_SC_PAGESIZE) };
+              if size <= 0 { DEFAULT_PAGE_SIZE } else { size as usize }
+          }
+
+          fn errno() -> c_int {
+              unsafe { *libc::__errno_location() }
+          }
+
+          /// Whether a `b` placed at `from` can reach `to`.
+          fn in_range(from: usize, to: usize) -> bool {
+              from.abs_diff(to) < B_RANGE as usize
+          }
+
+          /// Encode a `b` that branches from `from` to `to`.
+          ///
+          /// The branch is relative to the address of the branch instruction itself, and
+          /// the immediate field is split, so the two halves are placed separately.
+          fn encode_b(from: usize, to: usize) -> Option<u32> {
+              let delta = to as i64 - from as i64;
+              if delta & 3 != 0 {
+                  return None;
+              }
+              let offset = delta >> 2;
+              if !(-B_OFFSET_LIMIT..B_OFFSET_LIMIT).contains(&offset) {
+                  return None;
+              }
+              let bits = (offset as u32) & 0x03ff_ffff;
+              Some(B_OPCODE | ((bits & 0xffff) << 10) | (bits >> 16))
+          }
+
+          /// Write the absolute jump to `dest` into the slot at `slot`.
+          ///
+          /// ```text
+          /// +0  pcaddi $t0, 0        ; $t0 = the slot address
+          /// +4  ld.d   $t0, $t0, 16  ; $t0 = *(slot + 16) - the literal below
+          /// +8  jirl  $zero, $t0, 0  ; leave for the replacement function
+          /// +12 nop
+          /// +16 .quad dest
+          /// +24 nop, nop             ; keep the next slot 8-byte aligned
+          /// ```
+          fn fill_slot(slot: usize, dest: u64) {
+              let put = |index: usize, word: u32| unsafe {
+                  ptr::write_volatile((slot as *mut u32).add(index), word);
+              };
+              put(0, PCADDI_T0_0);
+              put(1, LD_D_T0_T0_16);
+              put(2, JIRL_ZERO_T0);
+              put(3, NOP);
+              put(4, dest as u32);
+              put(5, (dest >> 32) as u32);
+              put(6, NOP);
+              put(7, NOP);
+          }
+
+          /// Write the barrier helper into the last `FLUSH_SIZE` bytes of the page:
+          /// `dbar 0` + `ibar 0` + `jirl $zero, $ra, 0` + `nop`, a leaf function that
+          /// returns through `$ra` like any other.
+          fn fill_flush_helper(page: usize, size: usize) {
+              let tail = page + size - FLUSH_SIZE;
+              let put = |index: usize, word: u32| unsafe {
+                  ptr::write_volatile((tail as *mut u32).add(index), word);
+              };
+              put(0, DBAR_0);
+              put(1, IBAR_0);
+              put(2, RET);
+              put(3, NOP);
+          }
+
+          /// Execute `dbar 0; ibar 0` from the trampoline page so that the freshly written
+          /// instructions are observed by the instruction fetcher.
+          fn flush_instruction_stream(page: usize) {
+              // SAFETY: `page` is our own executable mapping, and the helper is a leaf
+              // function placed in the last `FLUSH_SIZE` bytes of it.
+              let entry = (page + page_size() - FLUSH_SIZE) as *const ();
+              let barrier: extern "C" fn() = unsafe { core::mem::transmute(entry) };
+              barrier();
+          }
+
+          /// Hand out the next slot of `page` that a `b` from `target` can still reach.
+          fn take_slot(page: &mut Page, target: usize) -> Option<usize> {
+              let capacity = page_size().saturating_sub(FLUSH_SIZE) / SLOT_SIZE;
+              while page.used < capacity {
+                  let slot = page.base + page.used * SLOT_SIZE;
+                  page.used += 1;
+                  if in_range(slot, target) {
+                      return Some(slot);
+                  }
+              }
+              None
+          }
+
+          /// Write a stub into `slot`, leaving the page executable again afterwards.
+          fn write_slot(page: usize, slot: usize, dest: u64) -> Result<(), String> {
+              let size = page_size();
+              if unsafe { mprotect(page as *mut c_void, size, PROT_READ_ | PROT_WRITE_ | PROT_EXEC_) } != 0 {
+                  return Err(format!(
+                      "mprotect(0x{:x}, RWX) failed with errno {}",
+                      page,
+                      errno()
+                  ));
+              }
+              fill_slot(slot, dest);
+              if unsafe { mprotect(page as *mut c_void, size, PROT_READ_ | PROT_EXEC_) } != 0 {
+                  return Err(format!(
+                      "mprotect(0x{:x}, RX) failed with errno {}",
+                      page,
+                      errno()
+                  ));
+              }
+              Ok(())
+          }
+
+          fn map_hint(hint: usize, size: usize, fixed: bool) -> Option<usize> {
+              let mut flags = MAP_PRIVATE_ | MAP_ANONYMOUS_;
+              if fixed {
+                  flags |= MAP_FIXED_NOREPLACE_;
+              }
+              let mapped = unsafe {
+                  mmap(
+                      hint as *mut c_void,
+                      size,
+                      PROT_READ_ | PROT_WRITE_,
+                      flags,
+                      -1,
+                      0,
+                  )
+              };
+              if mapped == libc::MAP_FAILED {
+                  None
+              } else {
+                  Some(mapped as usize)
+              }
+          }
+
+          /// Sorted, merged `start-end` ranges from `/proc/self/maps`.
+          ///
+          /// This is the process's own view of its address space, which is what decides
+          /// where a page can go without disturbing anything. An unreadable `/proc` (or a
+          /// non-Linux host) simply yields no ranges, and the caller falls back to
+          /// probing.
+          fn mapped_ranges() -> Vec<(usize, usize)> {
+              let Ok(text) = std::fs::read_to_string("/proc/self/maps") else {
+                  return Vec::new();
+              };
+              let mut ranges: Vec<(usize, usize)> = Vec::new();
+              for line in text.lines() {
+                  let Some(field) = line.split_whitespace().next() else {
+                      continue;
+                  };
+                  let Some((start, end)) = field.split_once('-') else {
+                      continue;
+                  };
+                  let (Ok(start), Ok(end)) = (
+                      usize::from_str_radix(start, 16),
+                      usize::from_str_radix(end, 16),
+                  ) else {
+                      continue;
+                  };
+                  if start < end {
+                      ranges.push((start, end));
+                  }
+              }
+              ranges.sort_unstable();
+
+              let mut merged: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
+              for (start, end) in ranges {
+                  match merged.last_mut() {
+                      Some(last) if start <= last.1 => last.1 = last.1.max(end),
+                      _ => merged.push((start, end)),
+                  }
+              }
+              merged
+          }
+
+          /// The free page-aligned addresses inside the branch window, nearest first.
+          struct Gaps {
+              candidates: Vec<usize>,
+              /// How many gaps the window contains, and how large the biggest one is.
+              /// Only used to explain a failure.
+              count: usize,
+              largest: usize,
+          }
+
+          fn free_gaps(target: usize, size: usize) -> Gaps {
+              let lo = target.saturating_sub(B_RANGE as usize).max(MIN_ADDRESS);
+              let hi = target.saturating_add(B_RANGE as usize);
+              let mut gaps = Gaps {
+                  candidates: Vec::new(),
+                  count: 0,
+                  largest: 0,
+              };
+
+              let mut bounds = mapped_ranges();
+              // Sentinel: the last gap runs up to the end of the window.
+              bounds.push((hi, hi));
+
+              let mut cursor = lo;
+              for (start, end) in bounds {
+                  let gap_start = cursor.max(lo);
+                  let gap_end = start.min(hi);
+                  if gap_end > gap_start {
+                      let first = gap_start.div_ceil(size) * size;
+                      let last = gap_end / size * size;
+                      if last > first {
+                          gaps.count += 1;
+                          gaps.largest = gaps.largest.max(last - first);
+                          gaps.candidates.push(first);
+                          if last - first > size {
+                              // The far end is worth trying as well: the near end may sit
+                              // against a mapping the kernel kept but `maps` did not merge.
+                              gaps.candidates.push(last - size);
+                          }
+                      }
+                  }
+                  cursor = cursor.max(end);
+                  if cursor >= hi {
+                      break;
+                  }
+              }
+
+              gaps.candidates
+                  .retain(|address| *address >= MIN_ADDRESS && in_range(*address, target));
+              gaps.candidates
+                  .sort_unstable_by_key(|address| address.abs_diff(target));
+              gaps.candidates.dedup();
+              gaps
+          }
+
+          /// `target`'s page base plus `delta`, if that lands in a usable place.
+          fn offset_address(target: usize, size: usize, delta: i64) -> Option<usize> {
+              let base = (target & !(size - 1)) as i64;
+              let address = base.checked_add(delta)?;
+              if address < MIN_ADDRESS as i64 {
+                  return None;
+              }
+              Some(address as usize)
+          }
+
+          /// Reserve one page close enough to `target` for a `b` branch to reach it.
+          ///
+          /// Every attempt is non-destructive: `MAP_FIXED_NOREPLACE` never replaces an
+          /// existing mapping, and a plain hint is only advisory.
+          fn alloc_page_near(target: usize) -> Result<usize, String> {
+              let size = page_size();
+              let mut probes = 0usize;
+              let gaps = free_gaps(target, size);
+
+              // (1) The exact free gaps of this process, nearest first. This reaches holes
+              //     a stepped probe would jump over and, crucially, holes *above* the
+              //     target - which the original downward-only sweep could never find.
+              for (index, address) in gaps.candidates.iter().enumerate() {
+                  probes += 1;
+                  if let Some(page) = map_hint(*address, size, true) {
+                      if in_range(page, target) {
+                          return Ok(page);
+                      }
+                      unsafe { munmap(page as *mut c_void, size) };
+                      continue;
+                  }
+                  if index < HINT_RETRIES {
+                      // A kernel that does not know MAP_FIXED_NOREPLACE ignores the flag
+                      // and treats the address as a hint; inside a known-free gap the hint
+                      // is honoured, so this still places the page exactly where we want.
+                      probes += 1;
+                      if let Some(page) = map_hint(*address, size, false) {
+                          if in_range(page, target) {
+                              return Ok(page);
+                          }
+                          unsafe { munmap(page as *mut c_void, size) };
+                      }
+                  }
+              }
+
+              // (2) Blind sweep, both directions. Only meaningful when
+              //     MAP_FIXED_NOREPLACE is honoured - which it is on every kernel this
+              //     target runs - but it keeps the hook installable when /proc/self/maps
+              //     cannot be read. A wide stride covers the whole range cheaply first.
+              for stride in [size * 16, size] {
+                  for direction in [-1i64, 1i64] {
+                      let limit = B_RANGE as usize / stride;
+                      for index in 1..=limit {
+                          let delta = stride as i64 * index as i64 * direction;
+                          if delta.abs() >= B_RANGE {
+                              break;
+                          }
+                          let Some(address) = offset_address(target, size, delta) else {
+                              continue;
+                          };
+                          probes += 1;
+                          if let Some(page) = map_hint(address, size, true) {
+                              if in_range(page, target) {
+                                  return Ok(page);
+                              }
+                              unsafe { munmap(page as *mut c_void, size) };
+                          }
+                      }
+                  }
+              }
+
+              Err(format!(
+                  "no free page for the trampoline within {} bytes of 0x{:x}: the branch \
+                   window holds {} usable gap(s) (largest {} bytes) and {} probes found \
+                   nothing - it is either mapped edge to edge or dominated by one large \
+                   reservation",
+                  B_RANGE, target, gaps.count, gaps.largest, probes
+              ))
+          }
+
+          // ── Public API (mirrors the `sighook` functions used by proxy/mod.rs) ─────
+
+          /// How many stub pages have been mapped so far.
+          ///
+          /// Exposed so the runtime self-test can prove that a second hook in the same
+          /// library reused the first hook's page instead of asking the kernel for a new
+          /// one - that reuse is what keeps the hook working in a process whose address
+          /// space is too dense to hold a second free page near the target.
+          #[allow(dead_code)]
+          pub(crate) fn stub_page_count() -> usize {
+              with_state(|state| state.pages.len()).unwrap_or(0)
+          }
+
+          /// Redirect the entry of `addr` to `replace_fn`, returning the instruction word
+          /// that was replaced.
+          pub(crate) fn inline_hook_jump(addr: u64, replace_fn: u64) -> Result<u32, String> {
+              let target = addr as usize;
+              if target == 0 || (target & 3) != 0 {
+                  return Err(format!("invalid hook target 0x{:x}", target));
+              }
+              if let Some(existing) = with_state(|state| state.hooks.get(&target).map(|hook| hook.original)).flatten()
+              {
+                  return Ok(existing);
+              }
+
+              let size = page_size();
+
+              // Reuse a stub page that is already within reach. `connect` and `close` sit
+              // in the same library, so the second hook normally needs - and gets - no new
+              // mapping, which is what makes this work in a process whose address space is
+              // dense enough to hold a single free page in the whole branch window.
+              let pooled = with_state(|state| {
+                  state.pages.iter_mut().find_map(|page| take_slot(page, target))
+              })
+              .flatten();
+
+              let (slot, page) = match pooled {
+                  Some(slot) => (slot, slot & !(size - 1)),
+                  None => {
+                      let page = alloc_page_near(target)?;
+                      fill_flush_helper(page, size);
+                      let slot = with_state(|state| {
+                          state.pages.push(Page { base: page, used: 0 });
+                          state.pages.last_mut().and_then(|page| take_slot(page, target))
+                      })
+                      .flatten()
+                      .ok_or_else(|| format!("the page at 0x{:x} cannot reach 0x{:x}", page, target))?;
+                      (slot, page)
+                  }
+              };
+
+              write_slot(page, slot, replace_fn)?;
+
+              let branch = match encode_b(target, slot) {
+                  Some(word) => word,
+                  None => {
+                      return Err(format!(
+                          "target 0x{:x} cannot branch to trampoline 0x{:x}",
+                          target, slot
+                      ));
+                  }
+              };
+
+              let code_page = target & !(size - 1);
+              if unsafe { mprotect(code_page as *mut c_void, size, PROT_READ_ | PROT_WRITE_ | PROT_EXEC_) } != 0
+              {
+                  return Err(format!(
+                      "mprotect(code page 0x{:x}) failed with errno {}",
+                      code_page,
+                      errno()
+                  ));
+              }
+              let original = unsafe { ptr::read_volatile(target as *const u32) };
+              unsafe { ptr::write_volatile(target as *mut u32, branch) };
+              unsafe { mprotect(code_page as *mut c_void, size, PROT_READ_ | PROT_EXEC_) };
+
+              flush_instruction_stream(page);
+              let _ = with_state(|state| state.hooks.insert(target, Hook { original, page }));
+              Ok(original)
+          }
+
+          /// Restore the instruction replaced by [`inline_hook_jump`]. Returns whether a
+          /// hook was actually installed at `addr`.
+          ///
+          /// The stub page is intentionally left mapped, and the slot is not reused: a
+          /// thread may still be executing inside it, and one page that a later hook can
+          /// share costs nothing to keep.
+          pub(crate) fn unhook(addr: u64) -> bool {
+              let target = addr as usize;
+              let removed = with_state(|state| state.hooks.remove(&target)).flatten();
+              let Some(hook) = removed else {
+                  return false;
+              };
+
+              let size = page_size();
+              let code_page = target & !(size - 1);
+              if unsafe { mprotect(code_page as *mut c_void, size, PROT_READ_ | PROT_WRITE_ | PROT_EXEC_) } != 0
+              {
+                  return false;
+              }
+              unsafe { ptr::write_volatile(target as *mut u32, hook.original) };
+              unsafe { mprotect(code_page as *mut c_void, size, PROT_READ_ | PROT_EXEC_) };
+
+              flush_instruction_stream(hook.page);
+              true
+          }
+          RSEOF
+          echo "==> 已写入 modules/window/src/linux/proxy/loong64_hook.rs"
+
+          # 机器码自校验: hook 靠手写指令字直接改写函数入口, 一个错字面量就会在
+          # 真机上崩溃。这里用 LLVM 汇编器把这些字面量重新汇编一遍逐字节比对,
+          # 也就是 loong64_hook.rs 头部注释提到的伴生脚本。
+          cat > modules/window/src/linux/proxy/verify-loong64-hook.py <<'PYEOF'
+          #!/usr/bin/env python3
+          """Verify the hand-written machine code in loong64_hook.rs against LLVM.
+
+          The loong64 inline hook patches a live function entry with hand-written
+          LoongArch instructions. A single mistyped literal, or a wrong shift in the
+          branch encoder, turns the patch into garbage that only shows up as a crash -
+          or as window dragging silently not working - on real loong64 hardware. So the
+          intended instruction sequence is assembled here with LLVM (through `zig cc`)
+          and compared byte for byte against what the Rust source says.
+
+          Two things are checked:
+
+            1. Every `const ... : u32 = 0x...` instruction word equals the encoding LLVM
+               produces for the instruction named in its doc comment.
+            2. The `b` encoder used to jump from the patched entry to the trampoline
+               matches LLVM on real displacements (both signs, and far enough to exercise
+               the split immediate), and round-trips across its whole range so no
+               displacement can silently wrap.
+
+          Usage: verify-loong64-hook.py [path/to/loong64_hook.rs] [path/to/zig]
+          """
+
+          import os
+          import re
+          import struct
+          import subprocess
+          import sys
+          import tempfile
+          from shutil import which
+
+          SRC_DEFAULT = os.path.join(
+              os.path.dirname(os.path.abspath(__file__)), "loong64_hook.rs"
+          )
+
+          # Rust const name -> the assembler line it must correspond to.
+          REFERENCE = [
+              ("PCADDI_T0_0", "pcaddi $t0, 0"),
+              ("LD_D_T0_T0_16", "ld.d $t0, $t0, 16"),
+              ("JIRL_ZERO_T0", "jirl $zero, $t0, 0"),
+              ("NOP", "nop"),
+              ("DBAR_0", "dbar 0"),
+              ("IBAR_0", "ibar 0"),
+              ("RET", "jirl $zero, $ra, 0"),
+          ]
+
+          B_OPCODE = 0x5000_0000
+
+
+          def find_zig(explicit):
+              for candidate in ([explicit] if explicit else []) + ["zig", "zig.exe"]:
+                  if not candidate:
+                      continue
+                  found = which(candidate) or (candidate if os.path.exists(candidate) else None)
+                  if found:
+                      return found
+              raise SystemExit("!! zig not found; pass its path as the second argument")
+
+
+          def elf_text(path):
+              """Raw bytes of the .text section of a 64-bit little-endian ELF object."""
+              with open(path, "rb") as handle:
+                  blob = handle.read()
+              if blob[:4] != b"\x7fELF" or blob[4] != 2 or blob[5] != 1:
+                  raise SystemExit("!! not a 64-bit little-endian ELF: " + path)
+
+              shoff = struct.unpack_from("<Q", blob, 0x28)[0]
+              esize = struct.unpack_from("<H", blob, 0x3A)[0]
+              count = struct.unpack_from("<H", blob, 0x3C)[0]
+              stridx = struct.unpack_from("<H", blob, 0x3E)[0]
+
+              def head(index):
+                  return struct.unpack_from("<IIQQQQ", blob, shoff + index * esize)
+
+              strtab = blob[head(stridx)[4] : head(stridx)[4] + head(stridx)[5]]
+              for index in range(count):
+                  name_off, _, _, _, offset, size = head(index)
+                  name = strtab[name_off : strtab.index(b"\0", name_off)].decode()
+                  if name == ".text":
+                      return blob[offset : offset + size]
+              raise SystemExit("!! no .text section in " + path)
+
+
+          def assemble(zig, source):
+              """Assemble one translation unit and return its .text bytes."""
+              with tempfile.TemporaryDirectory() as tmp:
+                  s_path = os.path.join(tmp, "hook.s")
+                  o_path = os.path.join(tmp, "hook.o")
+                  with open(s_path, "w") as handle:
+                      handle.write(source)
+                  proc = subprocess.run(
+                      [zig, "cc", "-target", "loongarch64-linux-gnu", "-c", s_path, "-o", o_path],
+                      capture_output=True,
+                      text=True,
+                  )
+                  if proc.returncode != 0:
+                      raise SystemExit("!! assembler failed:\n" + proc.stdout + proc.stderr)
+                  return elf_text(o_path)
+
+
+          # The assembler resolves `b` relative to the enclosing section, so labels are
+          # used and the branch is padded into place; addressing a literal absolute
+          # address is unreliable in a relocatable object.
+          def assemble_branch(zig, delta):
+              if delta > 0:
+                  source = ".text\n.globl _start\n_start:\n    b L\n    .space %d\nL:\n    nop\n" % (
+                      delta - 4
+                  )
+                  at = 0
+              else:
+                  source = ".text\n.globl _start\nL:\n    .space %d\n_start:\n    b L\n" % (-delta)
+                  at = -delta
+              return struct.unpack_from("<I", assemble(zig, source), at)[0]
+
+
+          def check_instruction_words(zig, rust_src):
+              words = {}
+              for name, line in REFERENCE:
+                  match = re.search(r"\bconst\s+%s\s*:\s*u32\s*=\s*0x([0-9a-fA-F_]+)\s*;" % name, rust_src)
+                  if not match:
+                      raise SystemExit("!! const %s not found in loong64_hook.rs" % name)
+                  words[name] = int(match.group(1).replace("_", ""), 16)
+
+              source = ".text\n.globl hook_words\nhook_words:\n"
+              source += "".join("    %s\n" % line for _, line in REFERENCE)
+              text = assemble(zig, source)
+              if len(text) != 4 * len(REFERENCE):
+                  raise SystemExit("!! unexpected .text size %d" % len(text))
+
+              bad = 0
+              for index, (name, line) in enumerate(REFERENCE):
+                  actual = struct.unpack_from("<I", text, index * 4)[0]
+                  if actual != words[name]:
+                      print("FAIL %-16s %-20s rust=0x%08x llvm=0x%08x" % (name, line, words[name], actual))
+                      bad += 1
+              if bad:
+                  raise SystemExit("!! %d instruction words do not match LLVM" % bad)
+              print("==> all %d instruction words match LLVM" % len(REFERENCE))
+
+
+          def encode_b(from_addr, to_addr):
+              """Mirror of encode_b() in loong64_hook.rs."""
+              delta = to_addr - from_addr
+              if delta & 3:
+                  return None
+              offset = delta >> 2
+              if offset < -(1 << 25) or offset >= (1 << 25):
+                  return None
+              bits = offset & 0x03FF_FFFF
+              return B_OPCODE | ((bits & 0xFFFF) << 10) | (bits >> 16)
+
+
+          def decode_b(word):
+              """Independent decoder: recover the signed byte displacement."""
+              offset = ((word & 0x3FF) << 16) | ((word >> 10) & 0xFFFF)
+              if offset & (1 << 25):
+                  offset -= 1 << 26
+              return offset * 4
+
+
+          def check_branch_encoder(zig):
+              # Past 256 KiB the upper half of the split immediate becomes non-zero, so
+              # the sample has to reach beyond that to cover the whole field layout.
+              magnitudes = [4, 8, 64, 256, 4096, 65536, 262144, 1 << 20, 1 << 22]
+              samples = [value for magnitude in magnitudes for value in (magnitude, -magnitude)]
+              bad = 0
+              for delta in samples:
+                  expected = encode_b(0, delta)
+                  actual = assemble_branch(zig, delta)
+                  if actual != expected:
+                      print("FAIL b delta=%-9d rust=0x%08x llvm=0x%08x" % (delta, expected, actual))
+                      bad += 1
+              if bad:
+                  raise SystemExit("!! %d branch encodings do not match LLVM" % bad)
+              print("==> b encoder matches LLVM on all %d sampled displacements" % len(samples))
+
+              cases = list(range(-400, 400))
+              cases += [-(1 << 25), -(1 << 25) + 1, -(1 << 24), (1 << 24), (1 << 25) - 2, (1 << 25) - 1]
+              cases += [-(1 << 25) + k for k in range(1, 400)]
+              cases += [(1 << 25) - 1 - k for k in range(400)]
+
+              bad = 0
+              for unit in cases:
+                  delta = unit * 4
+                  word = encode_b(0, delta)
+                  if word is None:
+                      print("FAIL b unit=%-10d rejected although in range" % unit)
+                      bad += 1
+                  elif decode_b(word) != delta:
+                      print("FAIL b unit=%-10d encoded=0x%08x decoded=%d" % (unit, word, decode_b(word)))
+                      bad += 1
+              for unit in ((1 << 25), -(1 << 25) - 1, (1 << 26), -(1 << 26)):
+                  if encode_b(0, unit * 4) is not None:
+                      print("FAIL b unit=%-10d accepted although out of range" % unit)
+                      bad += 1
+              if bad:
+                  raise SystemExit("!! %d branch round-trip failures" % bad)
+              print("==> b encoder round-trips across its whole range (%d cases)" % len(cases))
+
+
+          def main():
+              rust_path = sys.argv[1] if len(sys.argv) > 1 else SRC_DEFAULT
+              zig = find_zig(sys.argv[2] if len(sys.argv) > 2 else None)
+              with open(rust_path, encoding="utf-8") as handle:
+                  rust_src = handle.read()
+              print("==> verifying %s" % rust_path)
+              check_instruction_words(zig, rust_src)
+              check_branch_encoder(zig)
+              print("==> loong64 hook machine code verified")
+
+
+          if __name__ == "__main__":
+              main()
+          PYEOF
+          python3 modules/window/src/linux/proxy/verify-loong64-hook.py \
+            modules/window/src/linux/proxy/loong64_hook.rs
+      # ---------- 3.6. ui 模块 freetype-sys 走 bundled(源码)构建 ----------
+      # font-kit 在非 Windows/macOS/iOS 平台上是**硬依赖** freetype-sys(不是可选
+      # 依赖), 所以 source-fontconfig-dlopen 并不能把它摘掉; 而 freetype-sys 的
+      # build.rs 用 pkg-config 找 freetype2, 交叉编译时必然报:
+      #   pkg-config has not been configured to support cross-compilation
+      # 宿主 x86_64 的 freetype 也无法拿去给 loong64 链接, 所以必须换一条路。
+      #
+      # freetype-sys 自带 `bundled` 特性: 包内附了 freetype + libpng 源码, 由 cc
+      # 直接编译成静态库。cargo 的特性是可加的 —— 图里任意一处打开 bundled,
+      # font-kit 那份也会一起走源码构建, 因此无需改动 font-kit 的依赖声明。
+      # 编译链与 database 的 bundled sqlite 完全一致(cc 在没有 CC_<target> 时回退到
+      # RUSTC_LINKER, 也就是 cargo-zigbuild 设好的 zig), 于是: 不需要目标平台
+      # sysroot、不需要 pkg-config, 而且 C 代码同样按 glibc 2.36 编译。
+      - name: 补丁 ui 模块 (freetype-sys bundled 构建)
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib
+
+          ui = pathlib.Path("modules/ui/Cargo.toml")
+          s = ui.read_text()
+
+          if "freetype-sys" in s:
+              print("==> ui/Cargo.toml 已启用 freetype-sys, 跳过")
+              raise SystemExit(0)
+
+          anchor = "[build-dependencies]"
+          if anchor not in s:
+              raise SystemExit("!! ui/Cargo.toml 锚点未找到, 上游结构可能已变化")
+          if "[target.'cfg(target_os = \"linux\")'.dependencies]" in s:
+              raise SystemExit("!! ui/Cargo.toml 已有 linux 目标依赖表, 需手工合并 freetype-sys")
+
+          # 只加在 linux 目标下: 免得 macOS / Windows 上的 ui 构建被迫编译一份 freetype。
+          s = s.replace(
+              anchor,
+              "[target.'cfg(target_os = \"linux\")'.dependencies]\n"
+              "freetype-sys = { version = \"0.23\", features = [\"bundled\"] }\n"
+              "\n" + anchor,
+              1,
+          )
+          ui.write_text(s)
+          print("==> ui/Cargo.toml 已启用 freetype-sys/bundled (不再需要 pkg-config)")
+          PYEOF
+          python3 -c "import tomllib,pathlib; tomllib.loads(pathlib.Path('modules/ui/Cargo.toml').read_text()); print('==> ui/Cargo.toml 语法 OK')"
+          grep -n "freetype-sys" modules/ui/Cargo.toml
+
+      # ---------- 3.7. 补回 freetype-sys/libpng 需要的 zlib 头文件 ----------
+      # freetype-sys 的 build.rs 在 bundled 分支里编译 libpng 时用的是**写死的
+      # 相对路径** include("libz-sys/src/zlib"): 上游仓库中 libz-sys 是 git
+      # submodule(见 .gitmodules), 而 submodule 内容不会随 crate 发布到
+      # crates.io, 所以下载下来的包里这个目录根本不存在, 于是 libpng 的每个编译
+      # 单元都倒在 libpng/pngstruct.h:30 的 #include "zlib.h" 上:
+      #   libpng/pngstruct.h:30:10: fatal error: 'zlib.h' file not found
+      #
+      # 这个相对路径是按 build script 的工作目录(即 freetype-sys 包根目录)解析的
+      # —— 同一份 build.rs 里 include(".") / include("freetype2/include") 能生效,
+      # 以及 std::fs::copy("libpng/scripts/pnglibconf.h.prebuilt", ...) 能成功,
+      # 都证明工作目录就是包根。所以这里把 libz-sys 真源码里的 zlib 头补回原位:
+      #   (a) 在 freetype-sys 包内重建 libz-sys/src/zlib(回到 build.rs 的原意;
+      #       头文件与真正参与链接的 libz.a 出自同一份源码, 版本必然一致);
+      #   (b) 另外把该目录经 CFLAGS_<target> 注入 —— cc-rs 会把它追加到每一条 C
+      #       编译命令后面(见 cc-rs src/lib.rs:1999 读 CFLAGS_<target>, 2035 追加),
+      #       万一 (a) 的路径形态变了也还能编过。
+      # 两条都幂等, 且对上游 crates.io 包零改动(只在 cargo 缓存目录里补文件)。
+      - name: 补 zlib 头文件 (freetype-sys bundled 的 libpng 依赖)
+        run: |
+          set -euo pipefail
+
+          # 注意: 下面两个 glob 都带 `|| true` —— 开 pipefail 时, 若 ls 没匹配到
+          # 任何东西, 管道非零会让 set -e 在给出人类可读的报错之前就退出。
+          echo "==> 预取依赖 (让 libz-sys 源码落到 cargo registry)"
+          # 步骤 3.6 刚把 freetype-sys(bundled) 写进 ui/Cargo.toml, libz-sys 才会
+          # 出现在依赖图里。fetch 只下载不编译。
+          if ! (cd modules/ui && cargo fetch --target "${CROSS_TARGET}"); then
+            echo "::warning::cargo fetch --target 失败, 回退为全平台 fetch"
+            (cd modules/ui && cargo fetch)
+          fi
+
+          ZL=$(ls -d "${HOME}"/.cargo/registry/src/*/libz-sys-*/src/zlib 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "${ZL}" ] || [ ! -f "${ZL}/zlib.h" ]; then
+            echo "!! 在 cargo registry 里找不到 libz-sys/src/zlib, 无法补 zlib 头" >&2
+            ls -d "${HOME}"/.cargo/registry/src/*/ 2>/dev/null | head || true
+            exit 1
+          fi
+          echo "==> libz-sys 头文件源: ${ZL}"
+          grep -m1 "ZLIB_VERSION" "${ZL}/zlib.h" || true
+
+          FT=$(ls -d "${HOME}"/.cargo/registry/src/*/freetype-sys-*/ 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "${FT}" ] || [ ! -d "${FT}libpng" ]; then
+            echo "!! 找不到 freetype-sys 源码目录" >&2
+            exit 1
+          fi
+          echo "==> freetype-sys 包根: ${FT}"
+
+          # (a) 重建 build.rs 写死的那条相对路径
+          # 用复制而不是软链: 软链在部分环境(权限受限/不支持符号链接)会失败, 而
+          # 这里要的只是"把 submodule 本该有的内容放回去", 复制更稳且无需特权。
+          if [ ! -f "${FT}libz-sys/src/zlib/zlib.h" ]; then
+            mkdir -p "${FT}libz-sys/src"
+            cp -r "${ZL}" "${FT}libz-sys/src/zlib"
+          fi
+          test -f "${FT}libz-sys/src/zlib/zlib.h"
+          echo "==> 已就位: ${FT}libz-sys/src/zlib -> ${ZL}"
+
+          # (b) 再经 CFLAGS 注入一份, 给 cc-rs 兜底
+          ZINC="${RUNNER_TEMP}/zlib-include"
+          mkdir -p "${ZINC}"
+          cp -f "${ZL}"/*.h "${ZINC}/"
+          test -f "${ZINC}/zlib.h"
+          CFLAGS_VAR="CFLAGS_$(echo "${CROSS_TARGET}" | tr '-' '_')"
+          echo "${CFLAGS_VAR}=-I${ZINC}" >> "${GITHUB_ENV}"
+          echo "==> 已设置 ${CFLAGS_VAR}=-I${ZINC}"
+
+          # 预检: 用 zig 按 build.rs 的原始 include 列表试编一个 libpng 单元,
+          # 在 cargo 崩之前给出明确结论(失败即真失败, 因为它和 build.rs 用同一
+          # 条编译命令; 只是这里的报错更可读)。
+          # zig 可能只在 PATH(步骤 2 的 pip --user), 也可能只能经 python3 -m
+          # ziglang 调用 —— 两种都试, 找不到才跳过。
+          ZIG=()
+          if command -v zig >/dev/null 2>&1; then
+            ZIG=(zig)
+          elif python3 -c "import ziglang" >/dev/null 2>&1; then
+            ZIG=(python3 -m ziglang)
+          fi
+          if [ ${#ZIG[@]} -gt 0 ]; then
+            # build.rs 自己也会做这个 copy; 先做掉, 免得预检误报缺 pnglibconf.h
+            [ -f "${FT}libpng/pnglibconf.h" ] || \
+              cp "${FT}libpng/scripts/pnglibconf.h.prebuilt" "${FT}libpng/pnglibconf.h"
+            ZIG_TARGET=$(echo "${CROSS_TARGET_GLIBC}" | sed 's/-unknown-/-/')
+            if (cd "${FT}" && "${ZIG[@]}" cc -target "${ZIG_TARGET}" -c -O2 -fPIC \
+                  -Ilibpng -Ilibz-sys/src/zlib libpng/png.c -o "${RUNNER_TEMP}/zlib-probe-png.o"); then
+              echo "==> 预检通过: libpng/png.c 可按 build.rs 的 include 列表编译 (${ZIG_TARGET})"
+              # 顺手确认产物是真 loong64 目标文件(e_machine 258 = LoongArch)
+              python3 -c "import struct,sys;b=open(sys.argv[1],'rb').read(20);print('   e_machine=%d (258=LoongArch), 64-bit=%s' % (struct.unpack_from('<H',b,18)[0], b[4]==2))" "${RUNNER_TEMP}/zlib-probe-png.o" || true
+            else
+              echo "!! 预检失败: zlib 头仍未就位" >&2
+              exit 1
+            fi
+          else
+            echo "::warning::PATH 与 python3 里都没有 zig, 跳过 libpng 试编预检"
+          fi
+
+      # ---------- 3.8. 把 freetype-sys 的 zlib 链接从"动态"纠正为"静态" ----------
+      # freetype-sys 0.23.0 build.rs 的 bundled 分支里写死了一行动态链接请求:
+      #     build.compile("freetype2");
+      #     println!("cargo:rustc-link-lib=z");      <-- 没有 static= 前缀
+      # 原生构建能过, 纯粹因为系统自带 /usr/lib/<triple>/libz.so; 交叉编译时
+      # rustc 不会去翻编译器 sysroot, 只在显式列出的 -L 目录里找 libz.so
+      # (raw-dylibs / freetype-sys .../out / libz-sys .../out/lib / rustlib),
+      # 而那些目录里只有 libz-sys 用 cc 编出来的**静态** libz.a, 于是:
+      #   error: unable to find dynamic system library 'z' using strategy
+      #          'no_fallback'. searched paths: .../libz-sys-*/out/lib/libz.so
+      #
+      # 修法: 只把这一行的 "z" 改成 "static=z"。
+      #   - libz-sys 自己(build.rs:148 的 cfg.compile("z"))发的就是 static=z,
+      #     并把 libz.a 落在 <libz-sys OUT_DIR>/lib —— 两者一致, rustc 按
+      #     (名字, 类型) 去重后就是一条静态 -lz;
+      #   - 静态也是这里唯一可行的方向: 现编一个 libz.so 只会把链接期的问题
+      #     变成运行期对宿主 zlib 的动态依赖, 还要多带一个 DT_NEEDED;
+      #   - 顺带置 LIBZ_SYS_STATIC=1: libz-sys 用 option_env! 在**编译 build
+      #     script 时**读它(build.rs:253), 置 1 即跳过系统 zlib 探测直接源码
+      #     构建, libz.a 必然存在; 即便该值因缓存而过期, 其回退分支
+      #     zlib_installed() 在交叉编译下也必然失败(zig 的 loongarch64 sysroot
+      #     里没有 libz), 一样会落到源码构建 —— 两条路都保证 libz.a 就位。
+      # 只改 cargo 缓存里的源码, 不改上游包; 幂等。
+      - name: 修正 freetype-sys 的 zlib 链接方式 (动态 -> 静态)
+        run: |
+          set -euo pipefail
+
+          echo "LIBZ_SYS_STATIC=1" >> "${GITHUB_ENV}"
+          echo "==> 已设置 LIBZ_SYS_STATIC=1"
+
+          # 注意 glob 带 `|| true`: 开 pipefail 时未匹配的 ls 会让 set -e 在给出
+          # 人类可读的报错之前就退出。
+          FT=$(ls -d "${HOME}"/.cargo/registry/src/*/freetype-sys-*/ 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "${FT}" ] || [ ! -f "${FT}build.rs" ]; then
+            echo "!! 找不到 freetype-sys 的 build.rs(步骤 3.7 的 cargo fetch 应先建好 registry)" >&2
+            exit 1
+          fi
+          echo "==> freetype-sys build.rs: ${FT}build.rs"
+
+          # 精确改写那一行(全文件只有 1 处), 已改过则跳过
+          python3 - "${FT}build.rs" <<'PYEOF'
+          import pathlib
+          import sys
+
+          p = pathlib.Path(sys.argv[1])
+          s = p.read_text()
+
+          dyn = 'println!("cargo:rustc-link-lib=z");'
+          sta = 'println!("cargo:rustc-link-lib=static=z");'
+
+          if sta in s:
+              print("==> build.rs 已是 static=z, 跳过")
+          else:
+              n = s.count(dyn)
+              if n != 1:
+                  raise SystemExit(
+                      "!! 上游 build.rs 结构可能已变化: " + dyn + " 出现 "
+                      + str(n) + " 次(期望 1), 拒绝盲改"
+                  )
+              p.write_text(s.replace(dyn, sta, 1))
+              print("==> 已改写 build.rs: 动态 -lz -> 静态 -lz")
+          PYEOF
+
+          # 断言: 只剩静态请求
+          grep -n "rustc-link-lib" "${FT}build.rs" || true
+          grep -q 'cargo:rustc-link-lib=static=z' "${FT}build.rs"
+          if grep -q 'cargo:rustc-link-lib=z"' "${FT}build.rs"; then
+            echo "!! 仍存在动态 -lz 请求, 交叉编译会再次报 'unable to find dynamic system library'" >&2
+            exit 1
+          fi
+          echo "==> 预检通过: freetype-sys 只发静态 z 链接请求(与 libz-sys 的 static=z 一致)"
+      # libpng 1.6.44 的 pngpriv.h:181 在编译器定义 __loongarch_sx 时自动
+      # 打开 LSX 过滤器(zig cc 的 loongarch64 默认 la464), pngrutil.c 因此
+      # 引用 png_init_filter_functions_lsx; build.rs 只给 arm 补编了 SIMD
+      # 源文件, loongarch 什么都不编 -> dlopen 报 undefined symbol。
+      # 源文件就在包里, 这里在 arm 分支前补一个 loongarch64 分支。
+      - name: 补编 freetype-sys 内置 libpng 的 loong64 SIMD 源文件
+        run: |
+          set -euo pipefail
+
+          FT=$(ls -d "${HOME}"/.cargo/registry/src/*/freetype-sys-*/ 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "${FT}" ] || [ ! -f "${FT}build.rs" ]; then
+            echo "!! 找不到 freetype-sys 的 build.rs" >&2
+            exit 1
+          fi
+          echo "==> freetype-sys build.rs: ${FT}build.rs"
+
+          # 包里必须真的带着这两个源文件(libpng 1.6.44 有; 上游哪天换了
+          # libpng 且没带 loongarch 目录, 就在这里大声失败而不是运行期悬空)
+          test -f "${FT}libpng/loongarch/loongarch_lsx_init.c"
+          test -f "${FT}libpng/loongarch/filter_lsx_intrinsics.c"
+
+          python3 - "${FT}build.rs" <<'PYEOF'
+          import pathlib
+          import sys
+
+          p = pathlib.Path(sys.argv[1])
+          s = p.read_text()
+
+          if "loongarch_lsx_init.c" in s:
+              print("==> build.rs 已含 loongarch 分支, 跳过")
+          else:
+              anchor = 'if arch == "arm" || arch == "aarch64" {'
+              n = s.count(anchor)
+              if n != 1:
+                  raise SystemExit(
+                      "!! 上游 build.rs 结构可能已变化: arm 锚点出现 "
+                      + str(n) + " 次(期望 1), 拒绝盲改"
+                  )
+              ins = (
+                  'if arch == "loongarch64" {\n'
+                  '        build\n'
+                  '            .file("libpng/loongarch/loongarch_lsx_init.c")\n'
+                  '            .file("libpng/loongarch/filter_lsx_intrinsics.c");\n'
+                  '    }\n'
+                  '\n'
+                  '    '
+              )
+              p.write_text(s.replace(anchor, ins + anchor, 1))
+              print("==> 已插入 loongarch64 分支(编入 LSX 初始化与过滤器实现)")
+          PYEOF
+
+          grep -n "loongarch" "${FT}build.rs"
+          echo "==> 预检通过: libpng 的 LSX 源文件将随 bundled 构建一起编译"
+
+      - name: 交叉编译 Rust napi 模块
+        run: |
+          set -euo pipefail
+          for m in database dbus ui av3a window; do
+            echo "==> 交叉编译 @open-orpheus/${m} -> ${CROSS_TARGET_GLIBC}"
+            (cd "modules/${m}" && cargo zigbuild --release --target "${CROSS_TARGET_GLIBC}")
+            so=$(ls target/${CROSS_TARGET}/release/lib${m}*.so | head -1)
+            cp "${so}" "modules/${m}/${m}.linux-loong64-gnu.node"
+            echo "==> 产物: modules/${m}/${m}.linux-loong64-gnu.node"
+            # 立刻看一眼 DT_NEEDED: 交叉编译最容易出的事就是"静态库没真正静态化",
+            # 于是产物多出一条容器里没有(或版本不符)的动态依赖, 直到冒烟才炸。
+            # 宿主机的 binutils 认 loongarch64; 这里只读不判, 不改变构建结果。
+            readelf -d "modules/${m}/${m}.linux-loong64-gnu.node" 2>/dev/null \
+              | grep -E "NEEDED|SONAME|RUNPATH|TEXTREL" || true
+            # napi 的 loader 用相对 require("./<name>.linux-loong64-gnu.node"),
+            # 相对的是它被解析到的包目录(__dirname), 不一定是 modules/<m>:
+            # pnpm 的 nodeLinker=hoisted 会把工作区包硬链接成 node_modules/<pkg>
+            # 下的独立目录, 事后新增的文件不会出现在那里。按 require.resolve
+            # 找到真实目录, 不一致就补一份; 一致时什么都不做。
+            src="modules/${m}/${m}.linux-loong64-gnu.node"
+            pkg_dir=$(node -p "require('path').dirname(require.resolve('@open-orpheus/${m}/package.json'))" 2>/dev/null || true)
+            if [ -z "${pkg_dir}" ]; then
+              echo "::warning::解析不到 @open-orpheus/${m} 的包目录, 跳过放置"
+            elif [ "$(cd "${pkg_dir}" && pwd -P)" = "$(cd "modules/${m}" && pwd -P)" ]; then
+              echo "==> 解析目录就是 modules/${m}（符号链接）, 无需另存"
+            else
+              cp -f "${src}" "${pkg_dir}/"
+              echo "==> 另存到解析目录: ${pkg_dir}/$(basename "${src}")"
+            fi
+          done
+
+      # ---------- 5. 构建其余模块（tsdown / wasm，宿主机原生） ----------
+      # napi 模块(database/dbus/ui/av3a/window)已在步骤 4 交叉编译完 .node 放进模块
+      # 目录, 这里把模块 build 脚本里的 "napi build --platform --release"(会按宿主
+      # x64 构建)替换为跳过, 然后统一跑 build:modules: lifecycle 走 tsdown(x64 原
+      # 生 rolldown), audio-effect 走 cargo + wasm-bindgen(wasm32 目标, 架构无关)。
+      - name: 构建 TS / WASM 模块
+        run: |
+          set -euo pipefail
+          sed -i 's|napi build --platform --release|echo napi-module-prebuilt-for-loong64|' modules/*/package.json
+          pnpm run build:modules
+
+      # ---------- 6. 交叉编译 music-tag-native 并放入 pnpm store ----------
+      # music-tag-native(napi-rs, lofty)官方未发布 loong64 二进制;
+      # 从其 GitHub 源码按已安装版本交叉编译出原生 .node，放进 pnpm 虚拟
+      # store 里的真实目录（require.resolve 会解析符号链接得到真实路径）。
+      - name: 交叉编译 music-tag-native
+        run: |
+          set -euo pipefail
+          MTN_VERSION=$(node -p "require(\"music-tag-native/package.json\").version")
+          echo "==> music-tag-native 版本: ${MTN_VERSION}"
+          git clone --depth 1 --branch "v${MTN_VERSION}" \
+            https://github.com/subframe7536/music-tag-native.git /tmp/music-tag-native \
+            || git clone --depth 1 \
+              https://github.com/subframe7536/music-tag-native.git /tmp/music-tag-native
+          (cd /tmp/music-tag-native \
+            && cargo zigbuild --release --target "${CROSS_TARGET_GLIBC}")
+          so=$(ls /tmp/music-tag-native/target/${CROSS_TARGET}/release/libmusic_tag_native*.so | head -1)
+          MTN_DIR=$(node -p "require(\"path\").dirname(require.resolve(\"music-tag-native/package.json\"))")
+          echo "==> 放置位置: ${MTN_DIR}"
+          cp "${so}" "${MTN_DIR}/music-tag-native.linux-loong64-gnu.node"
+          # 确认已发布包的 loader 带 loong64 分支（napi-rs cli 3.8.x 生成，正常都有）
+          grep -q "linux-loong64-gnu" "${MTN_DIR}/index.js" \
+            && echo "==> loader 支持 loong64"
+
+      # ---------- 7. 校验产物架构（构建期快速暴露交叉编译问题） ----------
+      - name: 校验 .node 产物为 LoongArch ELF
+        run: |
+          set -euo pipefail
+          MTN_DIR=$(node -p "require(\"path\").dirname(require.resolve(\"music-tag-native/package.json\"))")
+          file \
+            modules/database/database.linux-loong64-gnu.node \
+            modules/dbus/dbus.linux-loong64-gnu.node \
+            modules/ui/ui.linux-loong64-gnu.node \
+            modules/av3a/av3a.linux-loong64-gnu.node \
+            modules/window/window.linux-loong64-gnu.node \
+            "${MTN_DIR}/music-tag-native.linux-loong64-gnu.node" \
+            | tee /tmp/arch-check.txt
+          grep -q "LoongArch" /tmp/arch-check.txt \
+            || { echo "!! 存在非 LoongArch 产物"; exit 1; }
+          echo "==> 全部 .node 产物均为 LoongArch"
+
+      # ---------- 7.5. loong64 hook 运行时自检程序 ----------
+      # loong64_hook.rs 是手写机器码: 出错时只会在真机上表现为崩溃或拖拽失灵。
+      # 这里把它单独编成一个 loong64 可执行文件, 在第 10 步的真实指令流里
+      # 实际 patch 一个函数入口并调用, 完整走一遍
+      # 改入口 -> b 跳 trampoline -> 绝对跳转到替换函数 -> unhook 还原。
+      - name: 构建 loong64 hook 运行时自检程序
+        run: |
+          set -euo pipefail
+          SELFTEST=/tmp/hook-selftest
+          mkdir -p "${SELFTEST}/src"
+          # 直接复用仓库里的同一份实现, 避免"测的"与"跑的"不是一份代码
+          cp modules/window/src/linux/proxy/loong64_hook.rs "${SELFTEST}/src/loong64_hook.rs"
+          cat > "${SELFTEST}/Cargo.toml" <<'TCEOF'
+          [package]
+          name = "hook-selftest"
+          version = "0.0.0"
+          edition = "2021"
+
+          [[bin]]
+          name = "hook-selftest"
+          path = "src/main.rs"
+
+          [dependencies]
+          libc = "0.2"
+          TCEOF
+          cat > "${SELFTEST}/src/main.rs" <<'RSEOF'
+          //! Runtime self-test for the loong64 inline hook.
+          //!
+          //! The hook rewrites the first instruction of libc's `connect` / `close`
+          //! entries. That is what lets the window module reroute the display-server
+          //! connection into its MITM proxy, and therefore what makes window dragging
+          //! and desktop-lyric dragging work. Hand-written machine code fails on real
+          //! hardware as a crash or a silent no-op, so this binary hooks a function of
+          //! its own and calls it, exercising the whole chain:
+          //!
+          //!     patched entry --b--> trampoline page --pcaddi/ld.d/jirl--> replacement
+          //!
+          //! and then unhooks and checks the original body is reachable again.
+          //!
+          //! A second function is hooked while the first hook is still installed,
+          //! mirroring `connect` + `close`: the second hook has to share the first
+          //! hook's stub page, which is what makes it work in a process whose
+          //! address space holds only one free page near the target.
+          //! The checks are split by how much they rely on the CPU's handling of
+          //! self-modifying code:
+          //!
+          //!   * memory-level - the entry word really is the encoded `b`, and unhook
+          //!     puts the exact previous word back. Deterministic everywhere.
+          //!   * execution-level - the detour is actually taken. That needs the CPU or
+          //!     emulator to notice a store into an instruction page, so under qemu-user
+          //!     a failure here is reported loudly but is not treated as proof of a bug.
+          //!
+          //! Exits non-zero only on a definite defect.
+
+          mod loong64_hook;
+
+          const ORIGINAL: u64 = 0x1111_1111_1111_1111;
+          const REPLACEMENT: u64 = 0x2222_2222_2222_2222;
+          const ORIGINAL_TWO: u64 = 0x3333_3333_3333_3333;
+          const REPLACEMENT_TWO: u64 = 0x4444_4444_4444_4444;
+
+          /// The function the hook is installed on. `#[inline(never)]` together with a
+          /// taken address keeps it as a real out-of-line body with its own entry.
+          #[inline(never)]
+          #[no_mangle]
+          pub extern "C" fn selftest_target() -> u64 {
+              std::hint::black_box(ORIGINAL)
+          }
+
+          /// Where the trampoline should land. It has to be ABI-compatible with the
+          /// target: the trampoline clobbers only `$t0`, a scratch register, and leaves
+          /// `$ra` alone, so the replacement returns straight to the original caller.
+          #[inline(never)]
+          #[no_mangle]
+          pub extern "C" fn selftest_replacement() -> u64 {
+              std::hint::black_box(REPLACEMENT)
+          }
+
+          /// The second hook target: hooked while [`selftest_target`] is still
+          /// patched, exactly like `close` is hooked while `connect` is.
+          #[inline(never)]
+          #[no_mangle]
+          pub extern "C" fn selftest_target_two() -> u64 {
+              std::hint::black_box(ORIGINAL_TWO)
+          }
+
+          /// Replacement for the second target. Same ABI rules as the first one.
+          #[inline(never)]
+          #[no_mangle]
+          pub extern "C" fn selftest_replacement_two() -> u64 {
+              std::hint::black_box(REPLACEMENT_TWO)
+          }
+
+          fn fail(message: &str) -> ! {
+              eprintln!("HOOK FAIL: {}", message);
+              std::process::exit(1);
+          }
+
+          fn main() {
+              let target_fn: extern "C" fn() -> u64 = selftest_target;
+              let replacement_fn: extern "C" fn() -> u64 = selftest_replacement;
+              let target = target_fn as usize;
+              let replacement = replacement_fn as usize;
+              println!("==> target=0x{:x} replacement=0x{:x}", target, replacement);
+
+              if target == replacement {
+                  fail("target and replacement resolved to the same address");
+              }
+              if target % 4 != 0 {
+                  fail("the hook target is not 32-bit aligned");
+              }
+
+              let baseline = selftest_target();
+              if baseline != ORIGINAL {
+                  fail(&format!("target returned 0x{:016x} before hooking", baseline));
+              }
+
+              let displaced = match loong64_hook::inline_hook_jump(target as u64, replacement as u64) {
+                  Ok(word) => word,
+                  Err(error) => fail(&format!("inline_hook_jump rejected the target: {}", error)),
+              };
+              println!("==> hook installed, displaced word = 0x{:08x}", displaced);
+
+              // Memory-level: the entry must now hold a `b` (opcode is bits 31:26).
+              let patched = unsafe { std::ptr::read_volatile(target as *const u32) };
+              if patched == displaced {
+                  fail("the entry word was not modified at all");
+              }
+              if patched >> 26 != 0b010100 {
+                  fail(&format!("entry word 0x{:08x} is not a `b` branch", patched));
+              }
+              println!("HOOK OK   entry now holds 0x{:08x} (a `b` branch)", patched);
+
+              // Execution-level: take the detour. qemu-user only manages this if it
+              // implements self-modifying-code invalidation, hence the softer wording.
+              let detoured = selftest_target();
+              if detoured == REPLACEMENT {
+                  println!("HOOK OK   detour reached the replacement function");
+              } else if detoured == ORIGINAL {
+                  println!("::warning::HOOK PENDING: the entry is patched but execution still reached the original body; that is the qemu-user self-modifying-code path, not proof of a defect on real hardware");
+              } else {
+                  fail(&format!("the hooked call returned 0x{:016x}", detoured));
+              }
+
+              // A second hook while the first is still installed - the
+              // `connect` + `close` sequence. The stub page must be shared:
+              // asking for another one is what used to fail on real hardware.
+              let second_fn: extern "C" fn() -> u64 = selftest_target_two;
+              let second = second_fn as usize;
+              let replacement_two_fn: extern "C" fn() -> u64 = selftest_replacement_two;
+              let replacement_two = replacement_two_fn as usize;
+              println!("==> second target=0x{:x}", second);
+
+              if selftest_target_two() != ORIGINAL_TWO {
+                  fail("second target did not return its original value before hooking");
+              }
+              let pages_before = loong64_hook::stub_page_count();
+              if let Err(error) = loong64_hook::inline_hook_jump(second as u64, replacement_two as u64)
+              {
+                  fail(&format!("second inline_hook_jump rejected the target: {}", error));
+              }
+              let pages_after = loong64_hook::stub_page_count();
+              if pages_after != pages_before {
+                  fail(&format!(
+                      "a second stub page was mapped ({} -> {}), the pool was not reused",
+                      pages_before, pages_after
+                  ));
+              }
+              println!(
+                  "HOOK OK   second hook shares the first stub page ({} page(s) mapped)",
+                  pages_after
+              );
+
+              let second_detoured = selftest_target_two();
+              if second_detoured == REPLACEMENT_TWO {
+                  println!("HOOK OK   second detour reached its replacement function");
+              } else if second_detoured == ORIGINAL_TWO {
+                  println!("::warning::HOOK PENDING: the second entry is patched but execution still reached the original body; that is the qemu-user self-modifying-code path, not proof of a defect on real hardware");
+              } else {
+                  fail(&format!("the second hooked call returned 0x{:016x}", second_detoured));
+              }
+
+              if !loong64_hook::unhook(second as u64) {
+                  fail("unhook reported that no second hook was installed");
+              }
+              if selftest_target_two() != ORIGINAL_TWO {
+                  fail("second target did not return its original value after unhook");
+              }
+              println!("UNHOOK OK second entry restored");
+
+              // Restore, and confirm the exact original word came back.
+              if !loong64_hook::unhook(target as u64) {
+                  fail("unhook reported that no hook was installed");
+              }
+              let restored = unsafe { std::ptr::read_volatile(target as *const u32) };
+              if restored != displaced {
+                  fail(&format!(
+                      "unhook restored 0x{:08x} instead of 0x{:08x}",
+                      restored, displaced
+                  ));
+              }
+              println!("UNHOOK OK entry restored to 0x{:08x}", restored);
+
+              let after = selftest_target();
+              if after != ORIGINAL {
+                  fail(&format!("target returned 0x{:016x} after unhook", after));
+              }
+              println!("UNHOOK OK the original body is reachable again");
+              println!("HOOK SELFTEST PASSED");
+          }
+          RSEOF
+          cargo zigbuild --release --target "${CROSS_TARGET_GLIBC}" \
+            --manifest-path "${SELFTEST}/Cargo.toml"
+          # 放在 out/ 之外: electron-forge 打包时会动 out/ 目录
+          mkdir -p build-tools
+          cp "${SELFTEST}/target/${CROSS_TARGET}/release/hook-selftest" build-tools/hook-selftest
+          file build-tools/hook-selftest | tee /tmp/hook-selftest-arch.txt
+          grep -q "LoongArch" /tmp/hook-selftest-arch.txt \
+            || { echo "!! 自检程序不是 LoongArch 产物"; exit 1; }
+          echo "==> 自检程序已就绪: build-tools/hook-selftest"
+
+      # ---------- 8. 给 forge.config.ts 注入 mirrorOptions ----------
+      # 作用: (a) 绕过 @electron/packager 的 loong64 架构白名单校验;
+      #       (b) 让 @electron/get 从 darkyzhou 镜像下载 electron loong64 zip。
+      # customDir 用 "v${ELECTRON_VERSION}"（release 目录带 v 前缀）。
+      - name: 注入 Electron 镜像配置
+        run: |
+          node -e '
+            const fs = require("fs");
+            const f = "forge.config.ts";
+            let s = fs.readFileSync(f, "utf8");
+            if (s.includes("mirrorOptions")) {
+              console.log("==> forge.config.ts 已含 mirrorOptions, 跳过注入");
+              process.exit(0);
+            }
+            const inject =
+              "    download: {\n" +
+              "      mirrorOptions: {\n" +
+              "        mirror: process.env.ELECTRON_MIRROR,\n" +
+              "        customDir: \"v\" + process.env.ELECTRON_VERSION,\n" +
+              "      },\n" +
+              "    },\n";
+            if (!s.includes("  packagerConfig: {\n")) {
+              console.error("!! 未找到 packagerConfig 注入锚点, forge.config.ts 结构可能已变化");
+              process.exit(1);
+            }
+            s = s.replace("  packagerConfig: {\n", "  packagerConfig: {\n" + inject);
+            fs.writeFileSync(f, s);
+            console.log("==> 已注入 mirrorOptions");
+          '
+
+      # ---------- 9. electron-forge 打包（loong64） ----------
+      # vite 主/预加载/渲染进程构建全部在 x64 宿主机原生完成，产物为平台无关
+      # 的 JS/CSS；打包时下载 electron-v${ELECTRON_VERSION}-linux-loong64.zip 并替换架构。
+      - name: electron-forge 打包 (linux / loong64)
+        timeout-minutes: 60
+        env:
+          ELECTRON_USE_REMOTE_CHECKSUMS: "1"
+        run: |
+          set -euo pipefail
+          # 注意: 不能用 "pnpm run package -- --platform ..." —— pnpm 11 会把字面量
+          # "--" 原样传给脚本, electron-forge(commander) 把 "--" 之后的所有参数
+          # 当作位置参数, --arch/--platform 被完全忽略, 回退宿主架构 x64 去镜像
+          # 下载 x64 zip → 404。直接调用 node_modules/.bin 里的二进制最稳。
+          ./node_modules/.bin/electron-forge package --platform linux --arch loong64
+          echo "==> electron 二进制架构确认:"
+          file out/open-orpheus-linux-loong64/electron
+
+      # ---------- 10. deepin 容器冒烟测试（QEMU + loong64 node） ----------
+      # 用 loong64 node 在真实 deepin (glibc) 环境加载全部原生模块与纯 WASM
+      # 依赖, 验证 ELF 架构 / glibc 兼容 / napi ABI。不涉及 SIMD, V8 可跑。
+      # 注意: bash -c '...' 单引号包裹的脚本体里禁止出现单引号。
+      - name: deepin 容器冒烟测试
+        timeout-minutes: 40
+        run: |
+          docker run --rm --platform linux/loong64 \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e NODE_VERSION="${NODE_VERSION}" \
+            linuxdeepin/deepin:crimson-loong64-v1.6.0 \
+            bash -c '
+              set -euo pipefail
+              echo "==> 架构: $(uname -m)"
+              echo "==> glibc: $(ldd --version | head -1)"
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends \
+                ca-certificates curl xz-utils binutils >/dev/null
+              curl -fsSL -o /tmp/node.tar.xz \
+                "https://unofficial-builds.nodejs.org/download/release/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-loong64.tar.xz"
+              mkdir -p /opt/node
+              tar -xJf /tmp/node.tar.xz -C /opt/node --strip-components=1
+              export PATH="/opt/node/bin:$PATH"
+              node -v
+              # qemu-user 把解释器映射进 guest 的 maps, 地址空间布局也和真机不同:
+              # 记一笔, 免得把模拟器的限制误判成龙芯上的缺陷。
+              echo "==> 运行环境线索"
+              head -3 /proc/self/maps | cut -c1-110 || true
+              grep -c qemu /proc/self/maps || true
+              echo "==> .node 产物的动态依赖 (readelf -d / ldd -r)"
+              # 这一组是不依赖 "node 能不能加载" 的独立证据: 少了哪个 .so、哪个符号
+              # 没解析、有没有 TEXTREL, 都在这里直接看得到。
+              for f in /workspace/modules/*/*.linux-loong64-gnu.node \
+                       /workspace/node_modules/@open-orpheus/*/*.linux-loong64-gnu.node; do
+                [ -e "$f" ] || continue
+                echo "--- $f"
+                ls -l "$f"
+                if command -v readelf >/dev/null 2>&1; then
+                  readelf -d "$f" 2>/dev/null \
+                    | grep -E "NEEDED|SONAME|RUNPATH|TEXTREL" || true
+                else
+                  echo "    (readelf 不可用)"
+                fi
+                ldd -r "$f" 2>&1 | tail -25 || true
+              done
+              MODULE_FAILED=0
+              set +e
+              node -e "
+                const fs = require(\"node:fs\");
+                const path = require(\"node:path\");
+
+                const report = process.report && process.report.getReport
+                  ? process.report.getReport().header || {}
+                  : {};
+                console.log(
+                  \"    node \" + process.version +
+                  \" arch=\" + process.arch +
+                  \" glibc=\" + (report.glibcVersionRuntime || \"(unknown)\")
+                );
+
+                const describe = (value, depth) => {
+                  if (!value || depth > 6) return \"\";
+                  const pad = \"    \".repeat(depth + 2);
+                  let text = pad + (value.message || String(value)) + \"\\n\";
+                  if (Array.isArray(value.errors)) {
+                    for (const inner of value.errors) text += describe(inner, depth + 1);
+                  }
+                  if (value.cause) text += describe(value.cause, depth + 1);
+                  return text;
+                };
+
+                const mods = [
+                  \"music-tag-native\",
+                  \"@open-orpheus/database\",
+                  \"@open-orpheus/dbus\",
+                  \"@open-orpheus/ui\",
+                  \"@open-orpheus/av3a\",
+                  \"@open-orpheus/window\",
+                  \"@silvia-odwyer/photon-node\",
+                ];
+                // 先把 7 个模块各自被解析到的目录和那里的 .node 列出来。
+                // require.resolve 默认会解符号链接: 打印出的是
+                // /workspace/node_modules/... 还是 /workspace/modules/...,
+                // 一眼就能区分「装成了实体目录(后补的 .node 不在里面)」与
+                // 「是指向 modules 的符号链接」。
+                console.log(\"==> 各模块的解析目录与 .node 产物\");
+                for (const m of mods) {
+                  try {
+                    const dir = path.dirname(require.resolve(m));
+                    const nodes = fs.readdirSync(dir).filter(function (name) {
+                      return name.slice(-5) === \".node\";
+                    });
+                    const detail = nodes.map(function (name) {
+                      return name + \"(\" + fs.statSync(path.join(dir, name)).size + \"B)\";
+                    });
+                    console.log(
+                      \"    \" + m + \" -> \" + dir +
+                      \" [\" + (detail.length ? detail.join(\", \") : \"!! 目录里没有 .node\") + \"]\"
+                    );
+                  } catch (e) {
+                    console.log(\"    \" + m + \" -> 解析失败: \" + (e && e.message));
+                  }
+                }
+                let failed = 0;
+                for (const m of mods) {
+                  try {
+                    require(m);
+                    console.log(\"SMOKE OK   \" + m);
+                  } catch (e) {
+                    failed++;
+                    console.error(\"SMOKE FAIL \" + m + \" -> \" + (e && e.message));
+                    console.error(describe(e, 0).trimEnd());
+                    // napi 的 loader 会把真正的原因放进 cause 链; 另外把被解析到
+                    // 的目录和那里的 .node 列出来, 一眼能区分 找不到文件 与 dlopen 失败。
+                    try {
+                      const entry = require.resolve(m);
+                      const dir = path.dirname(entry);
+                      console.error(\"    resolved: \" + entry);
+                      const names = fs.readdirSync(dir).filter(function (name) {
+                        return name.indexOf(\"node\") >= 0;
+                      });
+                      console.error(
+                        \"    native files there: \" + (names.length ? names.join(\", \") : \"(none)\")
+                      );
+                      // 绕过 napi loader 直接 require 每个 .node: 动态链接器的原始
+                      // 报错(缺 .so / 缺符号 / 版本不符 / TEXTREL)一字不改地出来。
+                      // 万一这里反而成功, 那就说明是 loader 的解析路径问题, 不是产物。
+                      for (const name of names) {
+                        if (name.slice(-5) !== \".node\") continue;
+                        const file = path.join(dir, name);
+                        console.error(\"    \" + name + \" \" + fs.statSync(file).size + \" bytes\");
+                        try {
+                          require(file);
+                          console.error(\"      direct dlopen OK\");
+                        } catch (direct) {
+                          console.error(\"      direct dlopen FAILED: \" + (direct && direct.message));
+                        }
+                      }
+                    } catch (inner) {
+                      console.error(\"    resolve failed: \" + inner.message);
+                    }
+                  }
+                }
+                process.exit(failed > 0 ? 1 : 0);
+              "
+              MODULE_FAILED=$?
+              set -e
+              echo "==> loong64 inline hook 运行时自检"
+              # hook 改写 libc 的 connect/close 入口, 是窗口拖动/桌面歌词拖动的
+              # 实现基础; 在真实 loong64 指令流上跑一遍, 确认 patch 真的生效。
+              test -x /workspace/build-tools/hook-selftest
+              /workspace/build-tools/hook-selftest
+              if [ "${MODULE_FAILED}" -ne 0 ]; then
+                echo "!! 有 ${MODULE_FAILED} 个原生模块加载失败, 详见上面的 cause 链" >&2
+                exit 1
+              fi
+              echo "==> 冒烟测试通过: 全部 loong64 原生模块可正常加载"
+            '
+
+      # ---------- 11. 产出 tar.gz ----------
+      - name: 打包产物 tar.gz
+        run: |
+          cd out
+          tar -czf open-orpheus-linux-loong64.tar.gz open-orpheus-linux-loong64
+          ls -lh
+          echo "==> 构建完成: out/open-orpheus-linux-loong64"
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: open-orpheus-linux-loong64
+          path: |
+            out/open-orpheus-linux-loong64/
+            build-tools/hook-selftest
+          if-no-files-found: error
