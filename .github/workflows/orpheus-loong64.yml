@@ -87,6 +87,13 @@
 #      bash 当成字符串边界, 引号外的括号直接语法错误(bash: line 74: syntax
 #      error near unexpected token '(')。JS 注释一律不用半角双引号, 校验脚本
 #      (check_smoke_js.py)已加此规则。
+#  17. pnpm 12 起官方 npm 包改为"原生二进制"发行: 包内 install.js 会把 JS 启动器
+#      替换成平台 ELF。若全局装的是旧版 JS pnpm, 它的 manage-package-manager-
+#      versions 机制会按项目 package.json 的 packageManager 自动切版本, 并用
+#      node 去执行那个 ELF 入口 -> "SyntaxError: Invalid or unexpected token"
+#      (报错文本里直接可见 ELF 字节)。安装 pnpm 步骤改用 @pnpm/exe(原生独立
+#      版, 内核直接 exec, node 不参与执行), 且版本号从 package.json 的
+#      packageManager 现场读取, 与仓库钉死的版本永远一致。
 
 name: 编译 open-orpheus (loong64 / deepin 25)
 
@@ -95,7 +102,7 @@ on:
 
 env:
   NODE_VERSION: 24.20.0          # loong64 node, 仅用于容器内冒烟测试
-  PNPM_VERSION: 11.20.0          # 与 package.json 的 packageManager 一致
+  PNPM_VERSION: 12.9.1           # 与 package.json 的 packageManager 一致(步骤会现场校验)
   ELECTRON_VERSION: 43.4.1       # darkyzhou 移植版（项目原为 43.3.0）
   ELECTRON_MIRROR: https://github.com/darkyzhou/electron-loong64/releases/download/
   CROSS_TARGET: loongarch64-unknown-linux-gnu
@@ -123,7 +130,18 @@ jobs:
 
       - name: 安装 pnpm
         run: |
-          npm install -g "pnpm@${PNPM_VERSION}"
+          set -euo pipefail
+          # pnpm 12 的 npm 包是原生二进制发行(install.js 把 JS 启动器换成平台
+          # ELF); 旧版 JS pnpm 的"自管版本"机制切到它时会用 node 去执行 ELF,
+          # 报 SyntaxError。所以: 用 @pnpm/exe 原生独立版安装(node 不参与执行),
+          # 版本从 package.json 的 packageManager 现场读取, 避免与仓库漂移。
+          WANTED="$(node -p "require('./package.json').packageManager.match(/^pnpm@([0-9.]+)/)[1]")"
+          if [ "${WANTED}" != "${PNPM_VERSION}" ]; then
+            echo "!! package.json 钉的 pnpm@${WANTED} 与 PNPM_VERSION=${PNPM_VERSION} 不一致, 以 package.json 为准" >&2
+          fi
+          PNPM_VERSION="${WANTED}"
+          echo "PNPM_VERSION=${PNPM_VERSION}" >> "${GITHUB_ENV}"
+          npm install -g "@pnpm/exe@${PNPM_VERSION}"
           pnpm -v
 
       # ---------- 1. Rust 工具链 + 交叉目标 + wasm-bindgen ----------
