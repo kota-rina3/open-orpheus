@@ -1,6 +1,4 @@
 import { BrowserWindow, screen } from "electron";
-import { normalize } from "node:path";
-
 import Emittery from "emittery";
 import {
   cancelNextWindowFirstCursorEnter,
@@ -150,7 +148,7 @@ export default class AppMenu extends Emittery<AppMenuEvents> {
       Promise.all(
         [...styles].map(async (style) => {
           try {
-            const buf = await skinPack.readFile(normalize(`/${style}`));
+            const buf = await skinPack.readFile(`/${style.replaceAll("\\", "/")}`);
             return [style, buf.toString("utf-8")] as const;
           } catch {
             return null;
@@ -168,6 +166,10 @@ export default class AppMenu extends Emittery<AppMenuEvents> {
         if (tpl) this.templates[entry[0]] = tpl;
       }
     }
+    LOGGER.debug(
+      { templateCount: Object.keys(this.templates).length, styleCount: styles.size },
+      "Menu templates loaded"
+    );
   }
 
   async show(parentWindow?: BrowserWindow) {
@@ -239,6 +241,7 @@ export default class AppMenu extends Emittery<AppMenuEvents> {
       } else {
         this.showWindow();
       }
+      LOGGER.info({ itemCount: this.items.length }, "Menu opened");
     } catch (error) {
       this.close();
       throw error;
@@ -247,6 +250,7 @@ export default class AppMenu extends Emittery<AppMenuEvents> {
 
   close() {
     if (this.closed) return;
+    LOGGER.debug("Menu closed");
     this.closed = true;
     this.lifetimeAbort.abort();
     const ownsGlobalWindows = activeMenu === this;
@@ -322,6 +326,7 @@ export default class AppMenu extends Emittery<AppMenuEvents> {
    * as a real xdg_popup through the Wayland proxy without loading it twice.
    */
   private showWaylandPopup(parentWindow: BrowserWindow) {
+    LOGGER.debug("Opening menu as native Wayland popup");
     let activePopup: BrowserWindow | null = null;
     let popupMapped = false;
     const dismiss = () => {
@@ -688,6 +693,7 @@ export default class AppMenu extends Emittery<AppMenuEvents> {
   // Created fresh each time so the compositor sends pointer-enter,
   // which the renderer uses to capture the real cursor position.
   private showOverlay() {
+    LOGGER.debug("Opening menu as Wayland overlay");
     // Even a forced fullscreen overlay can acquire its role at construction.
     const captureBeforeCreate =
       overlayPolicy.capturePhase === "before-create" ||
@@ -804,6 +810,7 @@ export default class AppMenu extends Emittery<AppMenuEvents> {
 
   // --- Non-Wayland: transparent popup BrowserWindow ---
   private showWindow() {
+    LOGGER.debug("Opening menu as popup window");
     const de = getDesktopEnvironment();
 
     const wnd = createMenuWindow();
