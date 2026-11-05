@@ -44,6 +44,11 @@ pub struct LayerShellOptions {
     pub namespace: String,
     /// Defaults to the top layer.
     pub layer: Option<LayerShellLayer>,
+    /// The `Display.id` of the output to create the layer surface on.
+    ///
+    /// Electron's `Display.id` is the Wayland registry global name, so it can
+    /// be passed through unchanged. Omit it to let the compositor choose.
+    pub output: Option<u32>,
     pub anchor_top: Option<bool>,
     pub anchor_bottom: Option<bool>,
     pub anchor_left: Option<bool>,

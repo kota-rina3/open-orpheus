@@ -2,12 +2,13 @@ import { BrowserWindow, clipboard, nativeImage } from "electron";
 import path from "node:path";
 import os from "node:os";
 
-import type { AppMenuItem } from "$sharedTypes/menu";
+import type { AppMenuItem } from "@shared/types/menu";
 import { DesktopEnvironment, dragWindow, getDesktopEnvironment } from "@open-orpheus/window";
 
 import { registerCallHandler } from "../calls";
 import { loadFromOrpheusUrl } from "../orpheus";
-import { getWindowScaleFactor, pngFromIco } from "../util";
+import { pngFromIco } from "../util/image";
+import { getWindowScaleFactor } from "../util/window";
 import { BasicManagedWindow, mainWindow, ManagedWindow } from "../window";
 import AppMenu from "../menu";
 import { registerGlobalShortcut, unregisterGlobalShortcut } from "../shortcuts";

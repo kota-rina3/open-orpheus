@@ -8,8 +8,10 @@ import { MusicFile } from "music-tag-native";
 
 import { musicLibraryDb } from "../database";
 import { registerCallHandler } from "../calls";
-import { fileExists, isFileNotFound, isMusicFile, normalizePath } from "../util";
-import { toError } from "../../util";
+import { fileExists, isFileNotFound } from "../util/fs";
+import { isMusicFile } from "../util/musicFile";
+import { normalizePath } from "../util/path";
+import { toError } from "@shared/util";
 import { commentToID3Metadata } from "../id3";
 
 type MusicLibraries = "<mymusic>" | "<download>" | "<windowsmedia>" | "<itunes>" | string;

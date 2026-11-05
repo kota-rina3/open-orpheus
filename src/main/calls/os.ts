@@ -6,7 +6,8 @@ import { app, BrowserWindow, Notification, powerSaveBlocker, screen, shell } fro
 
 import { getSystemFonts } from "@open-orpheus/ui";
 
-import { fileExists, normalizePath, sanitizeRelativePath } from "../util";
+import { fileExists } from "../util/fs";
+import { normalizePath, sanitizeRelativePath } from "../util/path";
 import { registerCallHandler } from "../calls";
 import { getADDeviceId, getDeviceId } from "../device";
 import {
@@ -16,6 +17,7 @@ import {
   setPowerOffFailureHandler,
   setScheduledShutdown,
 } from "../shutdown";
+import { getDisplayUniqueId } from "@main/util/display";
 
 registerCallHandler<[string], [boolean]>("os.isFileExist", async (event, path) => {
   const filePath = isAbsolute(path) ? normalizePath(path) : sanitizeRelativePath("data", path);
@@ -75,7 +77,7 @@ registerCallHandler<[string], [unknown]>("os.getSystemInfo", (event_, kind) => {
     const primary = screen.getPrimaryDisplay();
     return [
       screen.getAllDisplays().map((v) => ({
-        id: v.id,
+        id: getDisplayUniqueId(v),
         name: v.label,
         width: v.bounds.width,
         height: v.bounds.height,
@@ -96,7 +98,7 @@ registerCallHandler<
 >("os.getAllDisplayInfo", () => {
   const primary = screen.getPrimaryDisplay();
   return screen.getAllDisplays().map((v) => ({
-    deviceId: String(v.id),
+    deviceId: getDisplayUniqueId(v),
     name: v.label,
     isPrimary: v.id === primary.id,
   }));
