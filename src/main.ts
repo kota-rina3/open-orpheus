@@ -30,12 +30,14 @@ import versions from "../versions.json";
 import packManager, { NO_WEBPACK_ERROR_MESSAGE } from "./main/pack";
 import showPackgeDownloadWindow from "./main/windows/package-download";
 import { mainWindow } from "./main/window";
+import { sendIfAlive } from "./main/util/send";
 import registerAsProtocolClient from "./main/protocol";
 import { parseLocalFile, parseWebCommand, raceArgument } from "./main/arguments";
 import { toError } from "@shared/util";
 import { installLifecycle, setStartupTask } from "./main/lifecycle";
 import { checkEnvFlagPresent } from "./main/util/env";
 import { isFileNotFound } from "./main/util/fs";
+import { isNCMUrl } from "./main/util/url";
 import { PackageDownloadReason } from "@shared/types/package-download";
 
 import type WebPack from "./main/packs/WebPack";
@@ -116,8 +118,8 @@ app.on("ready", async () => {
     await mkdir(path.join(dataDir), { recursive: true });
 
     let userAgent = session.defaultSession.getUserAgent();
-    if (os.platform() === "linux") {
-      // Make some modules think we are indeed on desktop.
+    if (os.platform() !== "win32") {
+      // Force Windows User-Agent
       userAgent = userAgent.replace(
         /^(Mozilla\/5\.0 \([^)]*\))/,
         "Mozilla/5.0 (Windows NT 10.0; WOW64)"
@@ -289,7 +291,7 @@ app.on("ready", async () => {
           if (frame.isDestroyed()) return;
           const url = new URL(frame.url);
           // We want only secure, trusted pages
-          if (url.protocol === "https:" || url.hostname.endsWith("music.163.com"))
+          if (url.protocol === "https:" || isNCMUrl(url))
             void frame.executeJavaScript("window.channel = window.channel ?? {};");
         });
       });
@@ -473,8 +475,7 @@ app.on("open-file", (e, path) => {
     type: "openFile",
     file: path,
   });
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send("channel.call", "ipc.onipcmessagerecived", 2, path);
+  sendIfAlive(mainWindow, "channel.call", "ipc.onipcmessagerecived", 2, path);
 });
 
 app.on("open-url", (e, url) => {
@@ -485,8 +486,7 @@ app.on("open-url", (e, url) => {
     type: "openUrl",
     url,
   });
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send("channel.call", "ipc.onipcmessagerecived", 3, url);
+  sendIfAlive(mainWindow, "channel.call", "ipc.onipcmessagerecived", 3, url);
 });
 
 app.on("second-instance", async (event, argv) => {
@@ -500,8 +500,8 @@ app.on("second-instance", async (event, argv) => {
   }, argv);
   LOGGER.debug({ command: cmd?.[0] ?? null }, "Handled a second-instance launch");
   if (cmd) {
-    mainWindow.webContents.send("channel.call", "ipc.onipcmessagerecived", ...cmd);
+    sendIfAlive(mainWindow, "channel.call", "ipc.onipcmessagerecived", ...cmd);
     return;
   }
-  mainWindow.webContents.send("channel.call", "ipc.onipcmessagerecived", 1, null);
+  sendIfAlive(mainWindow, "channel.call", "ipc.onipcmessagerecived", 1, null);
 });
